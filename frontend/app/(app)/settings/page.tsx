@@ -34,10 +34,10 @@ export default function SettingsPage() {
             },
             {
               label: "AI Extraction",
-              value: process.env.NEXT_PUBLIC_OPENAI_KEY ? "GPT-4o Vision" : "Simulation Mode",
+              value: process.env.NEXT_PUBLIC_OPENAI_KEY ? "GPT-4o Vision" : "Disabled",
               status: process.env.NEXT_PUBLIC_OPENAI_KEY ? "ok" : "warn",
               icon: Key,
-              desc: "Set OPENAI_API_KEY in api/.env to enable real extraction",
+              desc: "Set OPENAI_API_KEY in api/.env to enable extraction",
             },
             {
               label: "Authentication",
@@ -116,7 +116,7 @@ export default function SettingsPage() {
           <div><span style={{ color: "#94a3b8" }}># Database</span></div>
           <div><span style={{ color: "#10b981" }}>DATABASE_URL</span>=postgresql+asyncpg://mediclaim:mediclaim@localhost:5432/mediclaim</div>
           <div style={{ marginTop: 8 }}><span style={{ color: "#94a3b8" }}># AI Extraction (optional)</span></div>
-          <div><span style={{ color: "#f59e0b" }}>OPENAI_API_KEY</span>=sk-... (leave empty for simulation)</div>
+          <div><span style={{ color: "#f59e0b" }}>OPENAI_API_KEY</span>=sk-...</div>
           <div style={{ marginTop: 8 }}><span style={{ color: "#94a3b8" }}># Auth (optional)</span></div>
           <div><span style={{ color: "#a78bfa" }}>NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY</span>=pk_...</div>
           <div><span style={{ color: "#a78bfa" }}>CLERK_SECRET_KEY</span>=sk_...</div>

@@ -66,14 +66,14 @@ export default function NewClaimPage() {
       // 1. Create claim
       const claim = await createClaim.mutateAsync({ patient_name: patientName || undefined, notes: notes || undefined });
 
-      // 2. Upload each file with progress simulation
+      // 2. Upload files
       const fileObjects = files.map((f) => f.file);
 
-      setFiles((prev) => prev.map((f) => ({ ...f, status: "uploading", progress: 30 })));
+      setFiles((prev) => prev.map((f) => ({ ...f, status: "uploading" })));
 
       await api.claims.upload(claim.id, fileObjects);
 
-      setFiles((prev) => prev.map((f) => ({ ...f, status: "done", progress: 100 })));
+      setFiles((prev) => prev.map((f) => ({ ...f, status: "done" })));
       toast.success("Documents uploaded! Redirecting to claim...");
 
       setTimeout(() => router.push(`/claims/${claim.id}`), 800);

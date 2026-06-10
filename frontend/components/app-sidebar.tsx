@@ -96,34 +96,7 @@ export function AppSidebar() {
         })}
       </nav>
 
-      {/* Bottom status */}
-      <div
-        style={{
-          padding: "14px 16px",
-          margin: "0 10px 12px",
-          borderRadius: 12,
-          background: "rgba(14,165,233,0.08)",
-          border: "1px solid rgba(14,165,233,0.15)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: "#10b981",
-              boxShadow: "0 0 6px #10b981",
-            }}
-          />
-          <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text-primary)" }}>
-            Simulation Mode
-          </span>
-        </div>
-        <p style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.5 }}>
-          AI extraction running with demo data. Add OpenAI key to enable real OCR.
-        </p>
-      </div>
+
     </aside>
   );
 }
