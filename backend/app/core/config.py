@@ -9,25 +9,11 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     environment: str = "development"
 
-    # Database — SQLite by default (no extra drivers needed on Python 3.14)
-    # Switch to postgresql+asyncpg://mediclaim:mediclaim@localhost:5432/mediclaim
-    # once asyncpg supports Python 3.14, or run via Docker.
-    database_url: str = "sqlite+aiosqlite:///./mediclaim.db"
+    # Database — PostgreSQL via asyncpg
+    database_url: str = "postgresql+asyncpg://mediclaim:mediclaim@localhost:5432/mediclaim"
 
-    # Storage — local disk by default
+    # Storage — local disk
     upload_dir: str = "uploads"
-    use_s3: bool = False
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    aws_s3_bucket: str = ""
-    aws_region: str = "ap-south-1"
-
-    # OpenAI (optional — simulation mode if empty)
-    openai_api_key: str = ""
-
-    # Clerk (optional — dev bypass if empty)
-    clerk_secret_key: str = ""
-    clerk_publishable_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

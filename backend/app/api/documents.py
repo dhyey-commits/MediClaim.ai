@@ -1,15 +1,17 @@
-"""Documents router — browse all documents, view extracted text."""
+"""Documents router — browse documents, view details, download files."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.database import get_db
-from app.models import Claim, Document
+from app.models import Document
+from app.services.storage import get_file
 
 router = APIRouter()
 
@@ -87,4 +89,29 @@ async def get_document(
         confidence_score=doc.confidence_score or 0.0,
         page_count=doc.page_count or 1,
         created_at=doc.created_at.isoformat() if doc.created_at else "",
+    )
+
+
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """Download the actual file for a document."""
+    result = await db.execute(
+        select(Document).where(Document.id == document_id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="No file path recorded for this document")
+
+    file_path = get_file(doc.file_path)
+
+    return FileResponse(
+        path=str(file_path),
+        filename=doc.file_name,
+        media_type=doc.file_type or "application/octet-stream",
     )

@@ -1,11 +1,11 @@
 """
 MediClaim AI — FastAPI Application Entry Point
+Week 1 MVP: Upload Pipeline
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,9 +23,14 @@ async def lifespan(app: FastAPI):
     print("[MediClaim AI] API starting up...")
     try:
         await init_db()
-        print("[OK] Database initialised")
+        print("[OK] Database initialised (PostgreSQL)")
     except Exception as e:
         print(f"[WARN] Database init warning: {e}")
+
+    # Ensure uploads directory exists
+    settings.upload_path.mkdir(parents=True, exist_ok=True)
+    print(f"[OK] Upload directory: {settings.upload_path}")
+
     yield
     print("[MediClaim AI] API shutting down")
 

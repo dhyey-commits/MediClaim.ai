@@ -101,9 +101,9 @@ export interface ClaimDetail {
   created_at: string;
   updated_at: string;
   documents: DocumentOut[];
-  diagnoses: DiagnosisOut[];
-  extracted_entities: ExtractedEntityOut[];
-  report: ReportOut | null;
+  diagnoses?: DiagnosisOut[];
+  extracted_entities?: ExtractedEntityOut[];
+  report?: ReportOut | null;
 }
 
 export interface DocumentDetail {

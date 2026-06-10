@@ -4,10 +4,10 @@ import { useState } from "react";
 import { use } from "react";
 import Link from "next/link";
 import {
-  Brain, Tag, FileBarChart2, Download, CheckCircle2, Clock, Circle,
-  FileText, RefreshCw, Edit2, Check, X, Loader2, AlertTriangle, Plus
+  CheckCircle2, Clock, Circle,
+  FileText, RefreshCw, Edit2, Check, X, Loader2, AlertTriangle, Plus, Download
 } from "lucide-react";
-import { useClaim, useExtract, useIcdMap, useGenerateReport, useOverrideIcd } from "@/hooks/queries";
+import { useClaim, useOverrideIcd } from "@/hooks/queries";
 import { formatDate, formatFileSize, formatConfidence, STATUS_BADGE_CLASS, STATUS_LABELS } from "@/lib/utils";
 import { api } from "@/services/api";
 import { toast } from "sonner";
@@ -182,9 +182,6 @@ function DiagnosisRow({
 export default function ClaimDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: claim, isLoading, refetch } = useClaim(id);
-  const extract = useExtract(id);
-  const icdMap = useIcdMap(id);
-  const generateReport = useGenerateReport(id);
 
   if (isLoading) {
     return (
@@ -208,42 +205,16 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  // Group extracted entities
+  // Group extracted entities (optional — Week 2+ feature)
+  const extractedEntities = claim.extracted_entities || [];
   const byType: Record<string, ExtractedEntityOut[]> = {};
-  claim.extracted_entities.forEach((e) => {
+  extractedEntities.forEach((e) => {
     (byType[e.entity_type] = byType[e.entity_type] || []).push(e);
   });
+  const diagnoses = claim.diagnoses || [];
+  const report = claim.report || null;
 
-  const canExtract = ["DOCUMENT_UPLOADED", "OCR_COMPLETE"].includes(claim.status) || claim.documents.length > 0;
-  const canIcd = ["EXTRACTION_COMPLETE", "ICD_MAPPED"].includes(claim.status);
-  const canReport = ["ICD_MAPPED", "REPORT_GENERATED"].includes(claim.status);
 
-  const handleExtract = async () => {
-    try {
-      const res = await extract.mutateAsync();
-      toast.success(`Extracted ${res.entities_extracted} clinical entities from ${claim.patient_name || "patient"}`);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Extraction failed");
-    }
-  };
-
-  const handleIcdMap = async () => {
-    try {
-      const res = await icdMap.mutateAsync();
-      toast.success(`Mapped ${res.mappings.length} diagnosis(es) to ICD-10 codes`);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "ICD mapping failed");
-    }
-  };
-
-  const handleGenerateReport = async () => {
-    try {
-      const res = await generateReport.mutateAsync();
-      toast.success(`ISCS report generated (${res.pdf_size_kb} KB PDF)`);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Report generation failed");
-    }
-  };
 
   return (
     <div className="animate-fade-in" style={{ maxWidth: 960 }}>
@@ -322,45 +293,11 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      {/* Action buttons */}
+      {/* Status info */}
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-header">
-          <div className="card-title">Workflow Actions</div>
-          <div className="card-desc">Run each step in sequence to process this claim</div>
-        </div>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button
-            className="btn btn-primary"
-            onClick={handleExtract}
-            disabled={!canExtract || extract.isPending}
-          >
-            {extract.isPending ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Extracting...</> : <><Brain size={15} /> Run AI Extraction</>}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleIcdMap}
-            disabled={!canIcd || icdMap.isPending}
-            style={!canIcd ? { opacity: 0.4 } : {}}
-          >
-            {icdMap.isPending ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Mapping...</> : <><Tag size={15} /> Generate ICD Codes</>}
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={handleGenerateReport}
-            disabled={!canReport || generateReport.isPending}
-            style={!canReport ? { opacity: 0.4 } : {}}
-          >
-            {generateReport.isPending ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating...</> : <><FileBarChart2 size={15} /> Generate ISCS Report</>}
-          </button>
-          {claim.report?.is_generated && (
-            <a
-              href={api.reports.downloadUrl(claim.report.id)}
-              download
-              className="btn btn-secondary"
-            >
-              <Download size={15} /> Download PDF
-            </a>
-          )}
+          <div className="card-title">Workflow Status</div>
+          <div className="card-desc">Current status: {claim.status === "DOCUMENT_UPLOADED" ? "Documents uploaded — ready for processing" : claim.status === "DRAFT" ? "Draft — upload documents to proceed" : claim.status}</div>
         </div>
       </div>
 
@@ -436,7 +373,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
       </div>
 
       {/* Extracted Entities */}
-      {claim.extracted_entities.length > 0 && (
+      {extractedEntities.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-header">
             <div className="card-title">Extracted Clinical Data</div>
@@ -452,7 +389,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
       )}
 
       {/* ICD Mapping */}
-      {claim.diagnoses.length > 0 && (
+      {diagnoses.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-header">
             <div className="card-title">ICD-10 Mapping</div>
@@ -468,7 +405,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
               </tr>
             </thead>
             <tbody>
-              {claim.diagnoses.map((diag) => (
+              {diagnoses.map((diag) => (
                 <DiagnosisRow key={diag.id} diag={diag} claimId={id} />
               ))}
             </tbody>
@@ -477,7 +414,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
       )}
 
       {/* Report preview */}
-      {claim.report?.is_generated && (
+      {report?.is_generated && (
         <div className="card">
           <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
@@ -485,10 +422,10 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
               <div className="card-desc">Indian Standard Clinical Summary — ready for download</div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
-              <Link href={`/reports/${claim.report.id}`} className="btn btn-secondary btn-sm">
+              <Link href={`/reports/${report!.id}`} className="btn btn-secondary btn-sm">
                 View Report
               </Link>
-              <a href={api.reports.downloadUrl(claim.report.id)} download className="btn btn-primary btn-sm">
+              <a href={api.reports.downloadUrl(report!.id)} download className="btn btn-primary btn-sm">
                 <Download size={13} /> Download PDF
               </a>
             </div>
@@ -510,7 +447,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
                 Report generated successfully
               </p>
               <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                Generated on {formatDate(claim.report.created_at)}
+                Generated on {formatDate(report!.created_at)}
               </p>
             </div>
           </div>
