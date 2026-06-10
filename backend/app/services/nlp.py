@@ -2,12 +2,8 @@ from app.schemas.claims import ClinicalExtraction
 
 
 def extract_medical_entities(raw_text: str) -> dict[str, list[str]]:
-    # Stubbed NLP output for demo environments.
-    return {
-        "symptoms": ["Fever", "Weakness"],
-        "diagnosis": ["Viral fever"],
-        "procedures": ["IV hydration"],
-    }
+    # Empty until NLP is implemented
+    return {}
 
 
 def enrich_extraction_with_nlp(extraction: ClinicalExtraction, raw_text: str) -> ClinicalExtraction:

@@ -44,7 +44,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,12 +57,20 @@ app.mount("/uploads", StaticFiles(directory=str(uploads_path)), name="uploads")
 # ── API Routes ───────────────────────────────────────────────────────────────
 from app.api import health, claims, documents, reports, analytics  # noqa: E402
 
-app.include_router(health.router, prefix="/api/v1", tags=["health"])
-app.include_router(claims.router, prefix="/api/v1/claims", tags=["claims"])
-app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
-app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
-app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
+app.include_router(health.router, prefix="/health", tags=["health"])
+app.include_router(claims.router, prefix="/claims", tags=["claims"])
+app.include_router(documents.router, prefix="/documents", tags=["documents"])
+app.include_router(reports.router, prefix="/reports", tags=["reports"])
+app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+import traceback
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    with open("error.log", "w") as f:
+        f.write(traceback.format_exc())
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 @app.get("/")
 async def root() -> dict:

@@ -1,0 +1,5 @@
+[MediClaim AI] API starting up...
+[OK] Seeded 44 ICD-10 codes
+[OK] Database initialised (PostgreSQL)
+[OK] Upload directory: uploads
+INFO:     127.0.0.1:54586 - "POST /claims HTTP/1.1" 201 Created
