@@ -53,6 +53,22 @@ export function useUploadDocuments(claimId: string) {
   });
 }
 
+export function useTriggerOcr(claimId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.claims.triggerOcr(claimId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["claims", claimId] }),
+  });
+}
+
+export function useOcrResults(claimId: string) {
+  return useQuery({
+    queryKey: ["claims", claimId, "ocr"],
+    queryFn: () => api.claims.getOcrResults(claimId),
+    enabled: !!claimId,
+  });
+}
+
 export function useExtract(claimId: string) {
   const qc = useQueryClient();
   return useMutation({

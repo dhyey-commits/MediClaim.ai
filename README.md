@@ -107,3 +107,4 @@ Hospital records -> AI standardization -> ISCS -> medical coding -> claim readin
 ├── Validation Score 92
 ├── ISCS Report
 └── Submitted to insurer
+Updated readme file with new features.

@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { use } from "react";
 import Link from "next/link";
 import {
   CheckCircle2, Clock, Circle,
-  FileText, RefreshCw, Edit2, Check, X, Loader2, AlertTriangle, Plus, Download
+  FileText, RefreshCw, Edit2, Check, X, Loader2, AlertTriangle, Plus, Download, ScanText
 } from "lucide-react";
-import { useClaim, useOverrideIcd } from "@/hooks/queries";
+import { useClaim, useOverrideIcd, useTriggerOcr, useOcrResults } from "@/hooks/queries";
 import { formatDate, formatFileSize, formatConfidence, STATUS_BADGE_CLASS, STATUS_LABELS } from "@/lib/utils";
 import { api } from "@/services/api";
 import { toast } from "sonner";
@@ -182,6 +182,30 @@ function DiagnosisRow({
 export default function ClaimDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: claim, isLoading, refetch } = useClaim(id);
+  const triggerOcr = useTriggerOcr(id);
+  const { data: ocrResults, refetch: refetchOcr } = useOcrResults(id);
+
+  const isProcessingOcr = claim?.status === "OCR_PROCESSING";
+
+  useEffect(() => {
+    if (isProcessingOcr) {
+      const interval = setInterval(() => {
+        refetch();
+        refetchOcr();
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [isProcessingOcr, refetch, refetchOcr]);
+
+  const handleRunOcr = async () => {
+    try {
+      await triggerOcr.mutateAsync();
+      toast.success("OCR started in background");
+      refetch();
+    } catch (err) {
+      toast.error("Failed to start OCR");
+    }
+  };
 
   if (isLoading) {
     return (
@@ -334,9 +358,21 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
               <div className="card-title">Documents</div>
               <div className="card-desc">{claim.documents.length} file(s) uploaded</div>
             </div>
-            <Link href="/claims/new" className="btn btn-secondary btn-sm">
-              <Plus size={13} /> Add
-            </Link>
+            <div style={{ display: "flex", gap: 10 }}>
+              {(claim.status === "DOCUMENT_UPLOADED" || claim.status === "OCR_FAILED") && (
+                <button
+                  onClick={handleRunOcr}
+                  className="btn btn-primary btn-sm"
+                  disabled={triggerOcr.isPending || isProcessingOcr}
+                >
+                  {triggerOcr.isPending || isProcessingOcr ? <Loader2 size={13} className="animate-spin" /> : <ScanText size={13} />}
+                  {isProcessingOcr ? "Processing..." : "Run OCR"}
+                </button>
+              )}
+              <Link href="/claims/new" className="btn btn-secondary btn-sm">
+                <Plus size={13} /> Add
+              </Link>
+            </div>
           </div>
           {claim.documents.length === 0 ? (
             <p style={{ color: "var(--text-muted)", fontSize: 13 }}>No documents uploaded.</p>
@@ -371,6 +407,28 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
           )}
         </div>
       </div>
+
+      {/* Raw OCR Text Display */}
+      {ocrResults && ocrResults.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-header">
+            <div className="card-title">Extracted Raw Text</div>
+            <div className="card-desc">Raw text extracted by PaddleOCR</div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {ocrResults.map((res, idx) => (
+              <div key={idx} style={{ padding: 16, background: "rgba(255,255,255,0.02)", borderRadius: 12, border: "1px solid var(--border)" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase" }}>
+                  Document ID: {res.document_id.slice(0, 8)} • Page {res.page_number}
+                </div>
+                <pre style={{ fontSize: 12, color: "var(--text-primary)", whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>
+                  {res.raw_text || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No text found on this page.</span>}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Extracted Entities */}
       {extractedEntities.length > 0 && (

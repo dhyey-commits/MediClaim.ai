@@ -106,6 +106,12 @@ export interface ClaimDetail {
   report?: ReportOut | null;
 }
 
+export interface OCRResultOut {
+  document_id: string;
+  page_number: number;
+  raw_text: string;
+}
+
 export interface DocumentDetail {
   id: string;
   claim_id: string;
@@ -201,6 +207,9 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ icd_code: icdCode }),
       }),
+    triggerOcr: (id: string) =>
+      request<{ message: string; status: string }>(`/claims/${id}/ocr`, { method: "POST" }),
+    getOcrResults: (id: string) => request<OCRResultOut[]>(`/claims/${id}/ocr`),
   },
 
   documents: {

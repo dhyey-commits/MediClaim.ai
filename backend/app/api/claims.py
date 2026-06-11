@@ -22,8 +22,11 @@ from app.models import (
     ClaimStatus,
     Document,
     DocumentStatus,
+    OCRResult,
 )
 from app.services.storage import save_file
+from app.services.ocr_service import run_ocr_for_claim
+from fastapi import BackgroundTasks
 
 router = APIRouter()
 
@@ -267,3 +270,64 @@ async def upload_documents(
     await db.commit()
 
     return {"claim_id": claim_id, "uploaded": len(uploaded), "files": uploaded}
+
+# ─────────────────────────────────────────────
+# POST /claims/{id}/ocr  — Trigger OCR
+# ─────────────────────────────────────────────
+
+@router.post("/{claim_id}/ocr", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_ocr(
+    claim_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    claim = result.scalar_one_or_none()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+        
+    claim.status = ClaimStatus.OCR_PROCESSING.value
+    await db.commit()
+        
+    # In FastAPI, BackgroundTasks run in the same event loop, but we need db session 
+    # to be open. Instead of passing db, we might need a fresh session for the background task,
+    # or pass a factory.
+    # For MVP, we will run the OCR task synchronously if it's very simple, or pass it an async wrapper
+    # that creates its own session.
+    # Since run_ocr_for_claim takes a session, we can just await it synchronously for simplicity in Week 2
+    # if it's just one document, but background_tasks is preferred.
+    # To use background tasks with SQLAlchemy async, we should spawn a new session.
+    # Let's adjust the wrapper to create a new session inline or just do it synchronously for MVP reliability.
+    
+    from app.database.database import AsyncSessionLocal
+    async def ocr_wrapper(cid: str):
+        async with AsyncSessionLocal() as session:
+            await run_ocr_for_claim(cid, session)
+            
+    background_tasks.add_task(ocr_wrapper, claim_id)
+    return {"message": "OCR processing started", "status": "OCR_PROCESSING"}
+
+
+# ─────────────────────────────────────────────
+# GET /claims/{id}/ocr  — Get OCR Results
+# ─────────────────────────────────────────────
+
+class OCRResultOut(BaseModel):
+    document_id: str
+    page_number: int
+    raw_text: str
+    
+    class Config:
+        from_attributes = True
+
+@router.get("/{claim_id}/ocr", response_model=list[OCRResultOut])
+async def get_ocr_results(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(OCRResult)
+        .where(OCRResult.claim_id == claim_id)
+        .order_by(OCRResult.document_id, OCRResult.page_number)
+    )
+    return result.scalars().all()

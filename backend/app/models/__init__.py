@@ -164,6 +164,23 @@ class Document(Base):
 
 
 # ---------------------------------------------------------------------------
+# OCRResult
+# ---------------------------------------------------------------------------
+
+class OCRResult(Base):
+    __tablename__ = "ocr_results"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    claim_id = Column(String, ForeignKey("claims.id"), nullable=False)
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
+    page_number = Column(Integer, default=1)
+    raw_text = Column(Text, nullable=False)
+    status = Column(String(50), default="COMPLETED")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    claim = relationship("Claim")
+    document = relationship("Document")
+# ---------------------------------------------------------------------------
 # ExtractedEntity  (structured clinical data from NLP)
 # ---------------------------------------------------------------------------
 
