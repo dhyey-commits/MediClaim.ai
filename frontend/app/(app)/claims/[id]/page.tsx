@@ -5,9 +5,9 @@ import { use } from "react";
 import Link from "next/link";
 import {
   CheckCircle2, Clock, Circle,
-  FileText, RefreshCw, Edit2, Check, X, Loader2, AlertTriangle, Plus, Download, ScanText
+  FileText, RefreshCw, Edit2, Check, X, Loader2, AlertTriangle, Plus, Download, ScanText, Copy, BrainCircuit
 } from "lucide-react";
-import { useClaim, useOverrideIcd, useTriggerOcr, useOcrResults } from "@/hooks/queries";
+import { useClaim, useOverrideIcd, useTriggerOcr, useOcrResults, useTriggerExtraction, useExtractionResult, useUpdateExtraction } from "@/hooks/queries";
 import { formatDate, formatFileSize, formatConfidence, STATUS_BADGE_CLASS, STATUS_LABELS } from "@/lib/utils";
 import { api } from "@/services/api";
 import { toast } from "sonner";
@@ -175,6 +175,112 @@ function DiagnosisRow({
   );
 }
 
+function ExtractionPanel({ claimId, extraction }: { claimId: string; extraction: any }) {
+  const update = useUpdateExtraction(claimId);
+  const [data, setData] = useState({
+    patient_name: extraction.patient_name || "",
+    age: extraction.age || "",
+    gender: extraction.gender || "",
+    admission_date: extraction.admission_date || "",
+    discharge_date: extraction.discharge_date || "",
+    chief_complaint: extraction.chief_complaint || "",
+    diagnosis_json: JSON.stringify(extraction.diagnosis_json || [], null, 2),
+    procedures_json: JSON.stringify(extraction.procedures_json || [], null, 2),
+    medications_json: JSON.stringify(extraction.medications_json || [], null, 2),
+    investigations_json: JSON.stringify(extraction.investigations_json || [], null, 2),
+  });
+
+  const handleSave = async (is_approved: boolean) => {
+    try {
+      await update.mutateAsync({
+        patient_name: data.patient_name,
+        age: data.age,
+        gender: data.gender,
+        admission_date: data.admission_date,
+        discharge_date: data.discharge_date,
+        chief_complaint: data.chief_complaint,
+        diagnosis_json: JSON.parse(data.diagnosis_json),
+        procedures_json: JSON.parse(data.procedures_json),
+        medications_json: JSON.parse(data.medications_json),
+        investigations_json: JSON.parse(data.investigations_json),
+        is_approved
+      });
+      toast.success(is_approved ? "Extraction approved!" : "Changes saved");
+    } catch (e) {
+      toast.error("Failed to save (check JSON formatting)");
+    }
+  };
+
+  const isLocked = extraction.is_approved;
+  const handleChange = (field: string, val: string) => setData(prev => ({ ...prev, [field]: val }));
+
+  return (
+    <div className="card" style={{ marginBottom: 20, border: isLocked ? "1px solid var(--success)" : undefined }}>
+      <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div className="card-title">Structured Clinical Extraction</div>
+          <div className="card-desc">AI-extracted data from OCR. Review and edit fields.</div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          {!isLocked && (
+            <>
+              <button onClick={() => handleSave(false)} className="btn btn-secondary btn-sm" disabled={update.isPending}>
+                {update.isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save Changes
+              </button>
+              <button onClick={() => handleSave(true)} className="btn btn-primary btn-sm" disabled={update.isPending} style={{ background: "var(--success)" }}>
+                <CheckCircle2 size={13} /> Approve & Lock
+              </button>
+            </>
+          )}
+          {isLocked && (
+            <span style={{ fontSize: 13, color: "var(--success)", display: "flex", alignItems: "center", gap: 6 }}>
+              <CheckCircle2 size={14} /> Approved
+            </span>
+          )}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Patient Name</label>
+          <input className="input" value={data.patient_name} onChange={e => handleChange("patient_name", e.target.value)} disabled={isLocked} />
+          
+          <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Age</label>
+          <input className="input" value={data.age} onChange={e => handleChange("age", e.target.value)} disabled={isLocked} />
+          
+          <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Gender</label>
+          <input className="input" value={data.gender} onChange={e => handleChange("gender", e.target.value)} disabled={isLocked} />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Admission Date</label>
+          <input className="input" value={data.admission_date} onChange={e => handleChange("admission_date", e.target.value)} disabled={isLocked} />
+          
+          <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Discharge Date</label>
+          <input className="input" value={data.discharge_date} onChange={e => handleChange("discharge_date", e.target.value)} disabled={isLocked} />
+          
+          <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Chief Complaint</label>
+          <input className="input" value={data.chief_complaint} onChange={e => handleChange("chief_complaint", e.target.value)} disabled={isLocked} />
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Diagnoses (JSON)</label>
+           <textarea className="input" rows={6} value={data.diagnosis_json} onChange={e => handleChange("diagnosis_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+           
+           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Procedures (JSON)</label>
+           <textarea className="input" rows={6} value={data.procedures_json} onChange={e => handleChange("procedures_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Medications (JSON)</label>
+           <textarea className="input" rows={6} value={data.medications_json} onChange={e => handleChange("medications_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+           
+           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Investigations (JSON)</label>
+           <textarea className="input" rows={6} value={data.investigations_json} onChange={e => handleChange("investigations_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────
 // Main Page
 // ─────────────────────────────────────────────
@@ -184,18 +290,22 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
   const { data: claim, isLoading, refetch } = useClaim(id);
   const triggerOcr = useTriggerOcr(id);
   const { data: ocrResults, refetch: refetchOcr } = useOcrResults(id);
+  const triggerExtraction = useTriggerExtraction(id);
+  const { data: extractionResult, refetch: refetchExtraction } = useExtractionResult(id);
 
   const isProcessingOcr = claim?.status === "OCR_PROCESSING";
+  const isProcessingExt = claim?.status === "EXTRACTION_PROCESSING";
 
   useEffect(() => {
-    if (isProcessingOcr) {
+    if (isProcessingOcr || isProcessingExt) {
       const interval = setInterval(() => {
         refetch();
-        refetchOcr();
+        if (isProcessingOcr) refetchOcr();
+        if (isProcessingExt) refetchExtraction();
       }, 3000);
       return () => clearInterval(interval);
     }
-  }, [isProcessingOcr, refetch, refetchOcr]);
+  }, [isProcessingOcr, isProcessingExt, refetch, refetchOcr, refetchExtraction]);
 
   const handleRunOcr = async () => {
     try {
@@ -204,6 +314,16 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
       refetch();
     } catch (err) {
       toast.error("Failed to start OCR");
+    }
+  };
+
+  const handleRunExtraction = async () => {
+    try {
+      await triggerExtraction.mutateAsync();
+      toast.success("Extraction started in background");
+      refetch();
+    } catch (err) {
+      toast.error("Failed to start extraction");
     }
   };
 
@@ -359,6 +479,17 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
               <div className="card-desc">{claim.documents.length} file(s) uploaded</div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
+              {(claim.status === "OCR_COMPLETE" || claim.status === "EXTRACTION_FAILED") && (
+                <button
+                  onClick={handleRunExtraction}
+                  className="btn btn-primary btn-sm"
+                  disabled={triggerExtraction.isPending || isProcessingExt}
+                  style={{ background: "var(--brand-500)" }}
+                >
+                  {triggerExtraction.isPending || isProcessingExt ? <Loader2 size={13} className="animate-spin" /> : <BrainCircuit size={13} />}
+                  {isProcessingExt ? "Extracting..." : "Run Extraction"}
+                </button>
+              )}
               {(claim.status === "DOCUMENT_UPLOADED" || claim.status === "OCR_FAILED") && (
                 <button
                   onClick={handleRunOcr}
@@ -411,15 +542,44 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
       {/* Raw OCR Text Display */}
       {ocrResults && ocrResults.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-header">
-            <div className="card-title">Extracted Raw Text</div>
-            <div className="card-desc">Raw text extracted by PaddleOCR</div>
+          <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div className="card-title">Extracted Raw Text</div>
+              <div className="card-desc">Raw text extracted by PaddleOCR</div>
+            </div>
+            <button
+              onClick={() => {
+                const fullText = ocrResults.map(r => `--- Page ${r.page_number} ---\n${r.raw_text}`).join('\n\n');
+                const blob = new Blob([fullText], { type: "text/plain" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `claim_${claim.claim_number}_ocr.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="btn btn-secondary btn-sm"
+            >
+              <Download size={13} /> Download All Text
+            </button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {ocrResults.map((res, idx) => (
               <div key={idx} style={{ padding: 16, background: "rgba(255,255,255,0.02)", borderRadius: 12, border: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase" }}>
-                  Document ID: {res.document_id.slice(0, 8)} • Page {res.page_number}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase" }}>
+                    Document ID: {res.document_id.slice(0, 8)} • Page {res.page_number} • Status: {res.status || "COMPLETED"}
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(res.raw_text);
+                      toast.success(`Page ${res.page_number} copied to clipboard`);
+                    }}
+                    className="btn btn-ghost btn-sm"
+                    title="Copy to clipboard"
+                  >
+                    <Copy size={13} />
+                  </button>
                 </div>
                 <pre style={{ fontSize: 12, color: "var(--text-primary)", whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>
                   {res.raw_text || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>No text found on this page.</span>}
@@ -428,6 +588,11 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
             ))}
           </div>
         </div>
+      )}
+
+      {/* Extraction Panel */}
+      {extractionResult && (
+        <ExtractionPanel claimId={id} extraction={extractionResult} />
       )}
 
       {/* Extracted Entities */}

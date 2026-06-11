@@ -40,7 +40,10 @@ class ClaimStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     DOCUMENT_UPLOADED = "DOCUMENT_UPLOADED"
     OCR_PROCESSING = "OCR_PROCESSING"
+    OCR_FAILED = "OCR_FAILED"
     OCR_COMPLETE = "OCR_COMPLETE"
+    EXTRACTION_PROCESSING = "EXTRACTION_PROCESSING"
+    EXTRACTION_FAILED = "EXTRACTION_FAILED"
     EXTRACTION_COMPLETE = "EXTRACTION_COMPLETE"
     ICD_MAPPED = "ICD_MAPPED"
     REPORT_READY = "REPORT_READY"
@@ -136,6 +139,7 @@ class Claim(Base):
     documents = relationship("Document", back_populates="claim", cascade="all, delete-orphan")
     diagnoses = relationship("Diagnosis", back_populates="claim", cascade="all, delete-orphan")
     extracted_entities = relationship("ExtractedEntity", back_populates="claim", cascade="all, delete-orphan")
+    extraction_result = relationship("ExtractionResult", back_populates="claim", uselist=False, cascade="all, delete-orphan")
     report = relationship("Report", back_populates="claim", uselist=False, cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="claim")
 
@@ -197,6 +201,39 @@ class ExtractedEntity(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     claim = relationship("Claim", back_populates="extracted_entities")
+
+
+# ---------------------------------------------------------------------------
+# ExtractionResult  (JSON-based structured extraction from OpenAI)
+# ---------------------------------------------------------------------------
+
+class ExtractionResult(Base):
+    __tablename__ = "extraction_results"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    claim_id = Column(String, ForeignKey("claims.id"), nullable=False, unique=True)
+    ocr_result_id = Column(String, ForeignKey("ocr_results.id"), nullable=True)
+
+    patient_name = Column(String(255))
+    age = Column(String(50))
+    gender = Column(String(50))
+    admission_date = Column(String(50))
+    discharge_date = Column(String(50))
+    chief_complaint = Column(Text)
+
+    diagnosis_json = Column(JSON)
+    procedures_json = Column(JSON)
+    medications_json = Column(JSON)
+    investigations_json = Column(JSON)
+
+    confidence_score = Column(Float, default=0.0)
+    is_approved = Column(Boolean, default=False)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    claim = relationship("Claim", back_populates="extraction_result")
+    ocr_result = relationship("OCRResult")
 
 
 # ---------------------------------------------------------------------------

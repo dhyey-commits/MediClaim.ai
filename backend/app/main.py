@@ -21,6 +21,13 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """Startup: create tables + seed data. Shutdown: cleanup."""
     print("[MediClaim AI] API starting up...")
+    
+    # Validate API Keys
+    if not settings.gemini_api_key:
+        print("[ERROR] GEMINI_API_KEY is missing from environment variables.")
+        raise ValueError("GEMINI_API_KEY is required to start the application.")
+    else:
+        print(f"[OK] GEMINI_API_KEY loaded successfully ({settings.gemini_api_key[:8]}...)")
     try:
         await init_db()
         print("[OK] Database initialised (PostgreSQL)")

@@ -69,11 +69,30 @@ export function useOcrResults(claimId: string) {
   });
 }
 
-export function useExtract(claimId: string) {
+export function useTriggerExtraction(claimId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.claims.extract(claimId),
+    mutationFn: () => api.claims.triggerExtraction(claimId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["claims", claimId] }),
+  });
+}
+
+export function useExtractionResult(claimId: string) {
+  return useQuery({
+    queryKey: ["claims", claimId, "extraction"],
+    queryFn: () => api.claims.getExtraction(claimId),
+    enabled: !!claimId,
+  });
+}
+
+export function useUpdateExtraction(claimId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.claims.updateExtraction>[1]) => api.claims.updateExtraction(claimId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "extraction"] });
+      qc.invalidateQueries({ queryKey: ["claims", claimId] });
+    },
   });
 }
 

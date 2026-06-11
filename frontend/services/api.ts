@@ -110,6 +110,24 @@ export interface OCRResultOut {
   document_id: string;
   page_number: number;
   raw_text: string;
+  status: string;
+}
+
+export interface ExtractionResultOut {
+  id: string;
+  claim_id: string;
+  patient_name: string | null;
+  age: string | null;
+  gender: string | null;
+  admission_date: string | null;
+  discharge_date: string | null;
+  chief_complaint: string | null;
+  diagnosis_json: any[] | null;
+  procedures_json: any[] | null;
+  medications_json: any[] | null;
+  investigations_json: any[] | null;
+  confidence_score: number;
+  is_approved: boolean;
 }
 
 export interface DocumentDetail {
@@ -210,6 +228,11 @@ export const api = {
     triggerOcr: (id: string) =>
       request<{ message: string; status: string }>(`/claims/${id}/ocr`, { method: "POST" }),
     getOcrResults: (id: string) => request<OCRResultOut[]>(`/claims/${id}/ocr`),
+    triggerExtraction: (id: string) =>
+      request<{ message: string; status: string }>(`/claims/${id}/extract`, { method: "POST" }),
+    getExtraction: (id: string) => request<ExtractionResultOut>(`/claims/${id}/extraction`),
+    updateExtraction: (id: string, body: Partial<ExtractionResultOut>) =>
+      request<ExtractionResultOut>(`/claims/${id}/extraction`, { method: "PATCH", body: JSON.stringify(body) }),
   },
 
   documents: {

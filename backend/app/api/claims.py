@@ -23,9 +23,11 @@ from app.models import (
     Document,
     DocumentStatus,
     OCRResult,
+    ExtractionResult,
 )
 from app.services.storage import save_file
 from app.services.ocr_service import run_ocr_for_claim
+from app.services.extraction_service import run_extraction_for_claim
 from fastapi import BackgroundTasks
 
 router = APIRouter()
@@ -316,6 +318,7 @@ class OCRResultOut(BaseModel):
     document_id: str
     page_number: int
     raw_text: str
+    status: str
     
     class Config:
         from_attributes = True
@@ -331,3 +334,97 @@ async def get_ocr_results(
         .order_by(OCRResult.document_id, OCRResult.page_number)
     )
     return result.scalars().all()
+
+# ─────────────────────────────────────────────
+# Extraction Endpoints
+# ─────────────────────────────────────────────
+
+class ExtractionResultOut(BaseModel):
+    id: str
+    claim_id: str
+    patient_name: str | None
+    age: str | None
+    gender: str | None
+    admission_date: str | None
+    discharge_date: str | None
+    chief_complaint: str | None
+    diagnosis_json: list | None
+    procedures_json: list | None
+    medications_json: list | None
+    investigations_json: list | None
+    confidence_score: float
+    is_approved: bool
+
+    class Config:
+        from_attributes = True
+
+class ExtractionUpdate(BaseModel):
+    patient_name: str | None = None
+    age: str | None = None
+    gender: str | None = None
+    admission_date: str | None = None
+    discharge_date: str | None = None
+    chief_complaint: str | None = None
+    diagnosis_json: list | None = None
+    procedures_json: list | None = None
+    medications_json: list | None = None
+    investigations_json: list | None = None
+    is_approved: bool | None = None
+
+@router.post("/{claim_id}/extract")
+async def trigger_extraction(
+    claim_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    claim = result.scalars().first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    if claim.status not in [ClaimStatus.OCR_COMPLETE.value, ClaimStatus.EXTRACTION_COMPLETE.value, ClaimStatus.EXTRACTION_PROCESSING.value, ClaimStatus.EXTRACTION_FAILED.value]:
+        raise HTTPException(status_code=400, detail="Claim is not ready for extraction")
+
+    claim.status = ClaimStatus.EXTRACTION_PROCESSING.value
+    await db.commit()
+
+    from app.database.database import AsyncSessionLocal
+    async def extraction_wrapper(cid: str):
+        async with AsyncSessionLocal() as session:
+            try:
+                await run_extraction_for_claim(cid, session)
+            except Exception as e:
+                print(f"Extraction failed: {e}")
+
+    background_tasks.add_task(extraction_wrapper, claim_id)
+    return {"message": "Extraction started", "status": "EXTRACTION_PROCESSING"}
+
+@router.get("/{claim_id}/extraction", response_model=ExtractionResultOut)
+async def get_extraction(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
+    ext = result.scalars().first()
+    if not ext:
+        raise HTTPException(status_code=404, detail="Extraction not found")
+    return ext
+
+@router.patch("/{claim_id}/extraction", response_model=ExtractionResultOut)
+async def update_extraction(
+    claim_id: str,
+    update_data: ExtractionUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
+    ext = result.scalars().first()
+    if not ext:
+        raise HTTPException(status_code=404, detail="Extraction not found")
+
+    update_dict = update_data.model_dump(exclude_unset=True)
+    for k, v in update_dict.items():
+        setattr(ext, k, v)
+
+    await db.commit()
+    await db.refresh(ext)
+    return ext

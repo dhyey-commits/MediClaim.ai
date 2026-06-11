@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # Storage — local disk
     upload_dir: str = "uploads"
 
+    # API Keys
+    gemini_api_key: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
