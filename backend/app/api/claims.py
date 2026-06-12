@@ -24,11 +24,14 @@ from app.models import (
     DocumentStatus,
     OCRResult,
     ExtractionResult,
+    Diagnosis,
+    ClaimICDRecommendation,
+    RecommendationStatus,
 )
 from app.services.storage import save_file
 from app.services.ocr_service import run_ocr_for_claim
 from app.services.extraction_service import run_extraction_for_claim
-from fastapi import BackgroundTasks
+from app.services.icd_mapper_service import suggest_icd_codes
 
 router = APIRouter()
 
@@ -382,7 +385,10 @@ async def trigger_extraction(
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
 
-    if claim.status not in [ClaimStatus.OCR_COMPLETE.value, ClaimStatus.EXTRACTION_COMPLETE.value, ClaimStatus.EXTRACTION_PROCESSING.value, ClaimStatus.EXTRACTION_FAILED.value]:
+    if claim.status == ClaimStatus.EXTRACTION_PROCESSING.value:
+        raise HTTPException(status_code=409, detail="Extraction already running")
+
+    if claim.status not in [ClaimStatus.OCR_COMPLETE.value, ClaimStatus.EXTRACTION_COMPLETE.value, ClaimStatus.EXTRACTION_FAILED.value]:
         raise HTTPException(status_code=400, detail="Claim is not ready for extraction")
 
     claim.status = ClaimStatus.EXTRACTION_PROCESSING.value
@@ -410,21 +416,249 @@ async def get_extraction(
         raise HTTPException(status_code=404, detail="Extraction not found")
     return ext
 
-@router.patch("/{claim_id}/extraction", response_model=ExtractionResultOut)
-async def update_extraction(
+@router.post("/{claim_id}/review/start")
+async def start_review(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    claim = result.scalars().first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    if claim.status != ClaimStatus.EXTRACTION_COMPLETE.value:
+        raise HTTPException(status_code=400, detail="Claim must be EXTRACTION_COMPLETE to start review")
+
+    ext_res = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
+    ext = ext_res.scalars().first()
+    if ext:
+        ext.reviewed_by = "System User"
+        ext.reviewed_at = datetime.utcnow()
+
+    claim.status = ClaimStatus.UNDER_REVIEW.value
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="REVIEW_STARTED",
+        entity_type="Claim",
+        entity_id=claim_id
+    ))
+    await db.commit()
+    return {"message": "Review started", "status": claim.status}
+
+@router.patch("/{claim_id}/review", response_model=ExtractionResultOut)
+async def update_review(
     claim_id: str,
     update_data: ExtractionUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
-    ext = result.scalars().first()
+    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    claim = result.scalars().first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+        
+    if claim.status == ClaimStatus.APPROVED.value:
+        raise HTTPException(status_code=403, detail="Claim is already approved and cannot be edited")
+
+    ext_res = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
+    ext = ext_res.scalars().first()
     if not ext:
         raise HTTPException(status_code=404, detail="Extraction not found")
 
     update_dict = update_data.model_dump(exclude_unset=True)
+    
+    # Audit log changes
     for k, v in update_dict.items():
-        setattr(ext, k, v)
+        old_val = getattr(ext, k)
+        if old_val != v:
+            setattr(ext, k, v)
+            db.add(AuditLog(
+                claim_id=claim_id,
+                action="FIELD_EDITED",
+                entity_type="ExtractionResult",
+                entity_id=ext.id,
+                old_value={k: old_val},
+                new_value={k: v}
+            ))
+
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="REVIEW_SAVED",
+        entity_type="ExtractionResult",
+        entity_id=ext.id
+    ))
 
     await db.commit()
     await db.refresh(ext)
     return ext
+
+@router.post("/{claim_id}/approve")
+async def approve_claim(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    claim = result.scalars().first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    if claim.status != ClaimStatus.UNDER_REVIEW.value:
+        raise HTTPException(status_code=400, detail="Claim must be UNDER_REVIEW to be approved")
+
+    ext_res = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
+    ext = ext_res.scalars().first()
+    if ext:
+        ext.is_approved = True
+        ext.approved_by = "System User"
+        ext.approved_at = datetime.utcnow()
+
+    claim.status = ClaimStatus.APPROVED.value
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="CLAIM_APPROVED",
+        entity_type="Claim",
+        entity_id=claim_id
+    ))
+    
+    await db.commit()
+    return {"message": "Claim approved", "status": claim.status}
+
+@router.get("/{claim_id}/audit")
+async def get_claim_audit(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(AuditLog).where(AuditLog.claim_id == claim_id).order_by(AuditLog.created_at.desc()))
+    audits = result.scalars().all()
+    return [{
+        "id": a.id,
+        "action": a.action,
+        "entity_type": a.entity_type,
+        "old_value": a.old_value,
+        "new_value": a.new_value,
+        "created_at": a.created_at.isoformat()
+    } for a in audits]
+
+@router.post("/{claim_id}/icd/suggest")
+async def suggest_icd(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    claim_res = await db.execute(select(Claim).where(Claim.id == claim_id))
+    claim = claim_res.scalars().first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    if claim.status != ClaimStatus.APPROVED.value:
+        raise HTTPException(status_code=400, detail="Claim must be APPROVED to generate ICD suggestions")
+
+    # Get diagnoses
+    ext_res = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
+    ext = ext_res.scalars().first()
+    
+    if not ext or not ext.diagnosis_json:
+        return {"message": "No diagnoses found to suggest for."}
+
+    generated_count = 0
+    # Check if we already generated
+    existing_res = await db.execute(select(ClaimICDRecommendation).where(ClaimICDRecommendation.claim_id == claim_id))
+    if existing_res.scalars().first():
+        return {"message": "Suggestions already generated."}
+
+    for diag in ext.diagnosis_json:
+        diag_text = diag.get("description", "")
+        if not diag_text:
+            continue
+        suggestions = await suggest_icd_codes(diag_text, db)
+        for sug in suggestions:
+            rec = ClaimICDRecommendation(
+                claim_id=claim_id,
+                diagnosis_text=diag_text,
+                icd_code=sug["code"],
+                confidence=sug["confidence"],
+                source="FTS5_SEARCH",
+                status=RecommendationStatus.SUGGESTED.value
+            )
+            db.add(rec)
+        generated_count += len(suggestions)
+        
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="ICD_SUGGESTION_GENERATED",
+        entity_type="Claim",
+        entity_id=claim_id,
+        new_value={"count": generated_count}
+    ))
+    
+    await db.commit()
+    return {"message": f"Generated {generated_count} suggestions"}
+
+
+@router.get("/{claim_id}/icd")
+async def get_icd_recommendations(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models import ICDCode
+    stmt = select(ClaimICDRecommendation, ICDCode.description).join(
+        ICDCode, ClaimICDRecommendation.icd_code == ICDCode.code
+    ).where(ClaimICDRecommendation.claim_id == claim_id)
+    
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    return [{
+        "id": r[0].id,
+        "diagnosis_text": r[0].diagnosis_text,
+        "icd_code": r[0].icd_code,
+        "description": r[1],
+        "confidence": r[0].confidence,
+        "status": r[0].status
+    } for r in rows]
+
+
+@router.post("/{claim_id}/icd/accept/{rec_id}")
+async def accept_icd(
+    claim_id: str,
+    rec_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    rec_res = await db.execute(select(ClaimICDRecommendation).where(ClaimICDRecommendation.id == rec_id))
+    rec = rec_res.scalars().first()
+    if not rec or rec.claim_id != claim_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    rec.status = RecommendationStatus.ACCEPTED.value
+    
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="ICD_ACCEPTED",
+        entity_type="ClaimICDRecommendation",
+        entity_id=rec_id,
+        new_value={"icd_code": rec.icd_code}
+    ))
+    await db.commit()
+    return {"message": "Accepted", "status": rec.status}
+
+
+@router.post("/{claim_id}/icd/reject/{rec_id}")
+async def reject_icd(
+    claim_id: str,
+    rec_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    rec_res = await db.execute(select(ClaimICDRecommendation).where(ClaimICDRecommendation.id == rec_id))
+    rec = rec_res.scalars().first()
+    if not rec or rec.claim_id != claim_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+
+    rec.status = RecommendationStatus.REJECTED.value
+    
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="ICD_REJECTED",
+        entity_type="ClaimICDRecommendation",
+        entity_id=rec_id,
+        new_value={"icd_code": rec.icd_code}
+    ))
+    await db.commit()
+    return {"message": "Rejected", "status": rec.status}

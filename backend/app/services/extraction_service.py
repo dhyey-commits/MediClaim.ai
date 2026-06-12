@@ -68,6 +68,16 @@ async def run_extraction_for_claim(claim_id: str, db: AsyncSession):
             raise ValueError("GEMINI_API_KEY is not configured in settings.")
         
         print(f"[EXTRACTION] Starting extraction for claim {claim_id}")
+        
+        db.add(AuditLog(
+            claim_id=claim_id,
+            action="EXTRACTION_STARTED",
+            entity_type="Claim",
+            entity_id=claim_id,
+            new_value={"model": model_used}
+        ))
+        await db.commit()
+        
         client = genai.Client(api_key=settings.gemini_api_key)
 
         ocr_stmt = select(OCRResult).where(OCRResult.claim_id == claim_id).order_by(OCRResult.page_number)

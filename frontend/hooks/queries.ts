@@ -61,6 +61,47 @@ export function useTriggerOcr(claimId: string) {
   });
 }
 
+export function useSuggestIcd(claimId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.claims.suggestIcd(claimId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "icd"] });
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "audit"] });
+    },
+  });
+}
+
+export function useIcdRecommendations(claimId: string) {
+  return useQuery({
+    queryKey: ["claims", claimId, "icd"],
+    queryFn: () => api.claims.getIcd(claimId),
+    enabled: !!claimId,
+  });
+}
+
+export function useAcceptIcd(claimId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (recId: string) => api.claims.acceptIcd(claimId, recId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "icd"] });
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "audit"] });
+    },
+  });
+}
+
+export function useRejectIcd(claimId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (recId: string) => api.claims.rejectIcd(claimId, recId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "icd"] });
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "audit"] });
+    },
+  });
+}
+
 export function useOcrResults(claimId: string) {
   return useQuery({
     queryKey: ["claims", claimId, "ocr"],
@@ -85,14 +126,44 @@ export function useExtractionResult(claimId: string) {
   });
 }
 
-export function useUpdateExtraction(claimId: string) {
+export function useStartReview(claimId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Parameters<typeof api.claims.updateExtraction>[1]) => api.claims.updateExtraction(claimId, body),
+    mutationFn: () => api.claims.startReview(claimId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["claims", claimId] });
+    },
+  });
+}
+
+export function useUpdateReview(claimId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Parameters<typeof api.claims.updateReview>[1]) => api.claims.updateReview(claimId, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["claims", claimId, "extraction"] });
       qc.invalidateQueries({ queryKey: ["claims", claimId] });
     },
+  });
+}
+
+export function useApproveClaim(claimId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.claims.approveClaim(claimId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "extraction"] });
+      qc.invalidateQueries({ queryKey: ["claims", claimId] });
+      qc.invalidateQueries({ queryKey: ["claims", claimId, "audit"] });
+    },
+  });
+}
+
+export function useClaimAudit(claimId: string) {
+  return useQuery({
+    queryKey: ["claims", claimId, "audit"],
+    queryFn: () => api.claims.getAudit(claimId),
+    enabled: !!claimId,
   });
 }
 

@@ -128,6 +128,10 @@ export interface ExtractionResultOut {
   investigations_json: any[] | null;
   confidence_score: number;
   is_approved: boolean;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
 }
 
 export interface DocumentDetail {
@@ -231,8 +235,21 @@ export const api = {
     triggerExtraction: (id: string) =>
       request<{ message: string; status: string }>(`/claims/${id}/extract`, { method: "POST" }),
     getExtraction: (id: string) => request<ExtractionResultOut>(`/claims/${id}/extraction`),
-    updateExtraction: (id: string, body: Partial<ExtractionResultOut>) =>
-      request<ExtractionResultOut>(`/claims/${id}/extraction`, { method: "PATCH", body: JSON.stringify(body) }),
+    startReview: (id: string) =>
+      request<{ message: string; status: string }>(`/claims/${id}/review/start`, { method: "POST" }),
+    updateReview: (id: string, body: Partial<ExtractionResultOut>) =>
+      request<ExtractionResultOut>(`/claims/${id}/review`, { method: "PATCH", body: JSON.stringify(body) }),
+    approveClaim: (id: string) =>
+      request<{ message: string; status: string }>(`/claims/${id}/approve`, { method: "POST" }),
+    getAudit: (id: string) => request<any[]>(`/claims/${id}/audit`),
+    suggestIcd: (id: string) =>
+      request<{ message: string }>(`/claims/${id}/icd/suggest`, { method: "POST" }),
+    getIcd: (id: string) =>
+      request<any[]>(`/claims/${id}/icd`),
+    acceptIcd: (id: string, recId: string) =>
+      request<{ message: string; status: string }>(`/claims/${id}/icd/accept/${recId}`, { method: "POST" }),
+    rejectIcd: (id: string, recId: string) =>
+      request<{ message: string; status: string }>(`/claims/${id}/icd/reject/${recId}`, { method: "POST" }),
   },
 
   documents: {

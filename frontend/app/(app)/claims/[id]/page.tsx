@@ -7,7 +7,7 @@ import {
   CheckCircle2, Clock, Circle,
   FileText, RefreshCw, Edit2, Check, X, Loader2, AlertTriangle, Plus, Download, ScanText, Copy, BrainCircuit
 } from "lucide-react";
-import { useClaim, useOverrideIcd, useTriggerOcr, useOcrResults, useTriggerExtraction, useExtractionResult, useUpdateExtraction } from "@/hooks/queries";
+import { useClaim, useOverrideIcd, useTriggerOcr, useOcrResults, useTriggerExtraction, useExtractionResult, useStartReview, useUpdateReview, useApproveClaim, useClaimAudit, useSuggestIcd, useIcdRecommendations, useAcceptIcd, useRejectIcd } from "@/hooks/queries";
 import { formatDate, formatFileSize, formatConfidence, STATUS_BADGE_CLASS, STATUS_LABELS } from "@/lib/utils";
 import { api } from "@/services/api";
 import { toast } from "sonner";
@@ -21,6 +21,8 @@ const WORKFLOW_STEPS = [
   { status: "DOCUMENT_UPLOADED", label: "Uploaded" },
   { status: "OCR_COMPLETE", label: "OCR Done" },
   { status: "EXTRACTION_COMPLETE", label: "Extracted" },
+  { status: "UNDER_REVIEW", label: "Reviewing" },
+  { status: "APPROVED", label: "Approved" },
   { status: "ICD_MAPPED", label: "ICD Mapped" },
   { status: "REPORT_GENERATED", label: "Report Ready" },
 ];
@@ -175,8 +177,11 @@ function DiagnosisRow({
   );
 }
 
-function ExtractionPanel({ claimId, extraction }: { claimId: string; extraction: any }) {
-  const update = useUpdateExtraction(claimId);
+function ReviewPanel({ claimId, extraction, status }: { claimId: string; extraction: any; status: string }) {
+  const startReview = useStartReview(claimId);
+  const updateReview = useUpdateReview(claimId);
+  const approveClaim = useApproveClaim(claimId);
+
   const [data, setData] = useState({
     patient_name: extraction.patient_name || "",
     age: extraction.age || "",
@@ -190,9 +195,18 @@ function ExtractionPanel({ claimId, extraction }: { claimId: string; extraction:
     investigations_json: JSON.stringify(extraction.investigations_json || [], null, 2),
   });
 
-  const handleSave = async (is_approved: boolean) => {
+  const handleStartReview = async () => {
     try {
-      await update.mutateAsync({
+      await startReview.mutateAsync();
+      toast.success("Review started");
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || "Failed to start review");
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      await updateReview.mutateAsync({
         patient_name: data.patient_name,
         age: data.age,
         gender: data.gender,
@@ -203,31 +217,50 @@ function ExtractionPanel({ claimId, extraction }: { claimId: string; extraction:
         procedures_json: JSON.parse(data.procedures_json),
         medications_json: JSON.parse(data.medications_json),
         investigations_json: JSON.parse(data.investigations_json),
-        is_approved
       });
-      toast.success(is_approved ? "Extraction approved!" : "Changes saved");
+      toast.success("Changes saved");
     } catch (e) {
       toast.error("Failed to save (check JSON formatting)");
     }
   };
 
-  const isLocked = extraction.is_approved;
+  const handleApprove = async () => {
+    try {
+      await approveClaim.mutateAsync();
+      toast.success("Claim approved!");
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || "Failed to approve claim");
+    }
+  };
+
+  const isLocked = extraction.is_approved || status === "APPROVED";
+  const isReviewing = status === "UNDER_REVIEW";
+  const canStartReview = status === "EXTRACTION_COMPLETE";
   const handleChange = (field: string, val: string) => setData(prev => ({ ...prev, [field]: val }));
 
   return (
     <div className="card" style={{ marginBottom: 20, border: isLocked ? "1px solid var(--success)" : undefined }}>
       <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div className="card-title">Structured Clinical Extraction</div>
-          <div className="card-desc">AI-extracted data from OCR. Review and edit fields.</div>
+          <div className="card-title">Clinical Data Review Panel</div>
+          <div className="card-desc" style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+            <span>Reviewer: {extraction.reviewed_by || "—"}</span>
+            <span>Reviewed: {extraction.reviewed_at ? new Date(extraction.reviewed_at + 'Z').toLocaleString() : "—"}</span>
+            <span>Approved: {extraction.approved_at ? new Date(extraction.approved_at + 'Z').toLocaleString() : "—"}</span>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          {!isLocked && (
+          {canStartReview && (
+            <button onClick={handleStartReview} className="btn btn-primary btn-sm" disabled={startReview.isPending}>
+              {startReview.isPending ? <Loader2 size={13} className="animate-spin" /> : <Edit2 size={13} />} Start Review
+            </button>
+          )}
+          {isReviewing && (
             <>
-              <button onClick={() => handleSave(false)} className="btn btn-secondary btn-sm" disabled={update.isPending}>
-                {update.isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save Changes
+              <button onClick={handleSave} className="btn btn-secondary btn-sm" disabled={updateReview.isPending}>
+                {updateReview.isPending ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save Edits
               </button>
-              <button onClick={() => handleSave(true)} className="btn btn-primary btn-sm" disabled={update.isPending} style={{ background: "var(--success)" }}>
+              <button onClick={handleApprove} className="btn btn-primary btn-sm" disabled={approveClaim.isPending} style={{ background: "var(--success)" }}>
                 <CheckCircle2 size={13} /> Approve & Lock
               </button>
             </>
@@ -242,41 +275,183 @@ function ExtractionPanel({ claimId, extraction }: { claimId: string; extraction:
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Patient Name</label>
-          <input className="input" value={data.patient_name} onChange={e => handleChange("patient_name", e.target.value)} disabled={isLocked} />
+          <input className="input" value={data.patient_name} onChange={e => handleChange("patient_name", e.target.value)} disabled={!isReviewing} />
           
           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Age</label>
-          <input className="input" value={data.age} onChange={e => handleChange("age", e.target.value)} disabled={isLocked} />
+          <input className="input" value={data.age} onChange={e => handleChange("age", e.target.value)} disabled={!isReviewing} />
           
           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Gender</label>
-          <input className="input" value={data.gender} onChange={e => handleChange("gender", e.target.value)} disabled={isLocked} />
+          <input className="input" value={data.gender} onChange={e => handleChange("gender", e.target.value)} disabled={!isReviewing} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Admission Date</label>
-          <input className="input" value={data.admission_date} onChange={e => handleChange("admission_date", e.target.value)} disabled={isLocked} />
+          <input className="input" value={data.admission_date} onChange={e => handleChange("admission_date", e.target.value)} disabled={!isReviewing} />
           
           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Discharge Date</label>
-          <input className="input" value={data.discharge_date} onChange={e => handleChange("discharge_date", e.target.value)} disabled={isLocked} />
+          <input className="input" value={data.discharge_date} onChange={e => handleChange("discharge_date", e.target.value)} disabled={!isReviewing} />
           
           <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Chief Complaint</label>
-          <input className="input" value={data.chief_complaint} onChange={e => handleChange("chief_complaint", e.target.value)} disabled={isLocked} />
+          <input className="input" value={data.chief_complaint} onChange={e => handleChange("chief_complaint", e.target.value)} disabled={!isReviewing} />
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
            <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Diagnoses (JSON)</label>
-           <textarea className="input" rows={6} value={data.diagnosis_json} onChange={e => handleChange("diagnosis_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+           <textarea className="input" rows={6} value={data.diagnosis_json} onChange={e => handleChange("diagnosis_json", e.target.value)} disabled={!isReviewing} style={{ fontFamily: "monospace", fontSize: 11 }} />
            
            <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Procedures (JSON)</label>
-           <textarea className="input" rows={6} value={data.procedures_json} onChange={e => handleChange("procedures_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+           <textarea className="input" rows={6} value={data.procedures_json} onChange={e => handleChange("procedures_json", e.target.value)} disabled={!isReviewing} style={{ fontFamily: "monospace", fontSize: 11 }} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
            <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Medications (JSON)</label>
-           <textarea className="input" rows={6} value={data.medications_json} onChange={e => handleChange("medications_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+           <textarea className="input" rows={6} value={data.medications_json} onChange={e => handleChange("medications_json", e.target.value)} disabled={!isReviewing} style={{ fontFamily: "monospace", fontSize: 11 }} />
            
            <label style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Investigations (JSON)</label>
-           <textarea className="input" rows={6} value={data.investigations_json} onChange={e => handleChange("investigations_json", e.target.value)} disabled={isLocked} style={{ fontFamily: "monospace", fontSize: 11 }} />
+           <textarea className="input" rows={6} value={data.investigations_json} onChange={e => handleChange("investigations_json", e.target.value)} disabled={!isReviewing} style={{ fontFamily: "monospace", fontSize: 11 }} />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// ICD Recommendation Panel
+// ─────────────────────────────────────────────
+
+function IcdRecommendationPanel({ claimId, status }: { claimId: string; status: string }) {
+  const suggest = useSuggestIcd(claimId);
+  const { data: recs, isLoading } = useIcdRecommendations(claimId);
+  const accept = useAcceptIcd(claimId);
+  const reject = useRejectIcd(claimId);
+
+  if (status !== "APPROVED" && status !== "ICD_MAPPED" && status !== "REPORT_GENERATED") {
+    return null;
+  }
+
+  const handleSuggest = async () => {
+    try {
+      await suggest.mutateAsync();
+      toast.success("ICD Suggestions generated");
+    } catch {
+      toast.error("Failed to generate suggestions");
+    }
+  };
+
+  const handleAccept = async (recId: string) => {
+    try {
+      await accept.mutateAsync(recId);
+      toast.success("Accepted ICD code");
+    } catch {
+      toast.error("Failed to accept ICD code");
+    }
+  };
+
+  const handleReject = async (recId: string) => {
+    try {
+      await reject.mutateAsync(recId);
+      toast.success("Rejected ICD code");
+    } catch {
+      toast.error("Failed to reject ICD code");
+    }
+  };
+
+  if (isLoading) return <div className="skeleton" style={{ height: 100 }} />;
+
+  const hasRecs = recs && recs.length > 0;
+  
+  // Group by diagnosis text
+  const byDiagnosis: Record<string, any[]> = {};
+  if (hasRecs) {
+     recs.forEach(r => {
+        (byDiagnosis[r.diagnosis_text] = byDiagnosis[r.diagnosis_text] || []).push(r);
+     });
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 20 }}>
+      <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div className="card-title">ICD-10 Recommendations</div>
+          <div className="card-desc">Review and accept AI-suggested ICD-10 codes</div>
+        </div>
+        {!hasRecs && (
+          <button 
+            className="btn btn-primary btn-sm" 
+            onClick={handleSuggest} 
+            disabled={suggest.isPending}
+          >
+            {suggest.isPending ? <Loader2 size={13} className="animate-spin" /> : <BrainCircuit size={13} />}
+            Generate Suggestions
+          </button>
+        )}
+      </div>
+      
+      {hasRecs && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {Object.entries(byDiagnosis).map(([diagText, suggestions], idx) => {
+             const accepted = suggestions.find(s => s.status === "ACCEPTED");
+             return (
+               <div key={idx} style={{ padding: 16, background: "rgba(255,255,255,0.02)", borderRadius: 12, border: "1px solid var(--border)" }}>
+                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 12 }}>
+                   {diagText}
+                 </div>
+                 
+                 {accepted ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 12, background: "rgba(16,185,129,0.1)", borderRadius: 8, border: "1px solid rgba(16,185,129,0.2)" }}>
+                      <CheckCircle2 size={16} style={{ color: "var(--success)" }} />
+                      <span style={{ fontSize: 12.5, color: "var(--success)", fontWeight: 600 }}>SELECTED:</span>
+                      <code style={{ fontSize: 13, color: "var(--brand-400)" }}>{accepted.icd_code}</code>
+                      <span style={{ fontSize: 12, color: "var(--text-primary)" }}>{accepted.description}</span>
+                    </div>
+                 ) : (
+                   <table className="data-table" style={{ margin: 0 }}>
+                     <thead>
+                       <tr>
+                         <th style={{ width: 100 }}>Code</th>
+                         <th>Description</th>
+                         <th style={{ width: 120 }}>Confidence</th>
+                         <th style={{ width: 140 }}>Action</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {suggestions.filter(s => s.status !== "REJECTED").map(s => (
+                         <tr key={s.id}>
+                           <td><code style={{ fontSize: 12, color: "var(--brand-400)" }}>{s.icd_code}</code></td>
+                           <td style={{ fontSize: 12 }}>{s.description}</td>
+                           <td><ConfidenceBar score={s.confidence} /></td>
+                           <td>
+                             <div style={{ display: "flex", gap: 6 }}>
+                               <button 
+                                 className="btn btn-primary btn-sm" 
+                                 onClick={() => handleAccept(s.id)}
+                                 disabled={accept.isPending || reject.isPending}
+                                 style={{ background: "rgba(16,185,129,0.15)", color: "var(--success)" }}
+                               >
+                                 Accept
+                               </button>
+                               <button 
+                                 className="btn btn-secondary btn-sm"
+                                 onClick={() => handleReject(s.id)}
+                                 disabled={accept.isPending || reject.isPending}
+                                 style={{ color: "var(--danger)" }}
+                               >
+                                 Reject
+                               </button>
+                             </div>
+                           </td>
+                         </tr>
+                       ))}
+                       {suggestions.filter(s => s.status !== "REJECTED").length === 0 && (
+                          <tr><td colSpan={4} style={{ textAlign: "center", padding: 16, color: "var(--text-muted)" }}>All suggestions rejected.</td></tr>
+                       )}
+                     </tbody>
+                   </table>
+                 )}
+               </div>
+             )
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -292,6 +467,7 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
   const { data: ocrResults, refetch: refetchOcr } = useOcrResults(id);
   const triggerExtraction = useTriggerExtraction(id);
   const { data: extractionResult, refetch: refetchExtraction } = useExtractionResult(id);
+  const { data: auditLogs, refetch: refetchAudit } = useClaimAudit(id);
 
   const isProcessingOcr = claim?.status === "OCR_PROCESSING";
   const isProcessingExt = claim?.status === "EXTRACTION_PROCESSING";
@@ -592,7 +768,49 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
 
       {/* Extraction Panel */}
       {extractionResult && (
-        <ExtractionPanel claimId={id} extraction={extractionResult} />
+        <ReviewPanel claimId={id} extraction={extractionResult} status={claim.status} />
+      )}
+
+      {/* Difference View */}
+      {(claim.status === "UNDER_REVIEW" || claim.status === "APPROVED") && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-header">
+            <div className="card-title">Review Difference View</div>
+            <div className="card-desc">Compare original extracted fields with human edits</div>
+          </div>
+          <div style={{ display: "flex", gap: 20 }}>
+             <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase" }}>Edited Fields</div>
+                {!auditLogs || auditLogs.filter(a => a.action === "FIELD_EDITED").length === 0 ? (
+                  <p style={{ fontSize: 13, color: "var(--text-muted)" }}>No fields have been edited yet.</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {auditLogs.filter(a => a.action === "FIELD_EDITED").map((log, i) => {
+                      const fieldKey = Object.keys(log.old_value)[0];
+                      const oldVal = typeof log.old_value[fieldKey] === "object" ? JSON.stringify(log.old_value[fieldKey]) : log.old_value[fieldKey];
+                      const newVal = typeof log.new_value[fieldKey] === "object" ? JSON.stringify(log.new_value[fieldKey]) : log.new_value[fieldKey];
+                      return (
+                        <div key={i} style={{ padding: 12, background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px solid var(--border)" }}>
+                           <div style={{ fontSize: 11, fontWeight: 600, color: "var(--brand-400)", marginBottom: 6 }}>{fieldKey.toUpperCase()}</div>
+                           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <div style={{ flex: 1, padding: 8, background: "rgba(239, 68, 68, 0.1)", color: "var(--text-primary)", fontSize: 12, borderRadius: 6 }}>
+                                <span style={{ color: "var(--danger)", fontWeight: 600, fontSize: 10, display: "block", marginBottom: 2 }}>EXTRACTED</span>
+                                {oldVal || "null"}
+                              </div>
+                              <Check style={{ color: "var(--text-muted)", flexShrink: 0 }} size={14} />
+                              <div style={{ flex: 1, padding: 8, background: "rgba(16, 185, 129, 0.1)", color: "var(--text-primary)", fontSize: 12, borderRadius: 6 }}>
+                                <span style={{ color: "var(--success)", fontWeight: 600, fontSize: 10, display: "block", marginBottom: 2 }}>EDITED</span>
+                                {newVal || "null"}
+                              </div>
+                           </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+             </div>
+          </div>
+        </div>
       )}
 
       {/* Extracted Entities */}
@@ -611,30 +829,8 @@ export default function ClaimDetailPage({ params }: { params: Promise<{ id: stri
         </div>
       )}
 
-      {/* ICD Mapping */}
-      {diagnoses.length > 0 && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-header">
-            <div className="card-title">ICD-10 Mapping</div>
-            <div className="card-desc">Click the edit icon to manually override any code</div>
-          </div>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Diagnosis</th>
-                <th>ICD-10 Code</th>
-                <th>Description</th>
-                <th>Confidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {diagnoses.map((diag) => (
-                <DiagnosisRow key={diag.id} diag={diag} claimId={id} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* ICD Recommendations */}
+      <IcdRecommendationPanel claimId={id} status={claim.status} />
 
       {/* Report preview */}
       {report?.is_generated && (

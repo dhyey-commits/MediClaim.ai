@@ -45,6 +45,8 @@ class ClaimStatus(str, enum.Enum):
     EXTRACTION_PROCESSING = "EXTRACTION_PROCESSING"
     EXTRACTION_FAILED = "EXTRACTION_FAILED"
     EXTRACTION_COMPLETE = "EXTRACTION_COMPLETE"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    APPROVED = "APPROVED"
     ICD_MAPPED = "ICD_MAPPED"
     REPORT_READY = "REPORT_READY"
 
@@ -55,6 +57,10 @@ class DocumentStatus(str, enum.Enum):
     OCR_COMPLETE = "OCR_COMPLETE"
     FAILED = "FAILED"
 
+class RecommendationStatus(str, enum.Enum):
+    SUGGESTED = "SUGGESTED"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
 
 # ---------------------------------------------------------------------------
 # Organization
@@ -138,6 +144,7 @@ class Claim(Base):
     created_by = relationship("User", back_populates="claims")
     documents = relationship("Document", back_populates="claim", cascade="all, delete-orphan")
     diagnoses = relationship("Diagnosis", back_populates="claim", cascade="all, delete-orphan")
+    icd_recommendations = relationship("ClaimICDRecommendation", back_populates="claim")
     extracted_entities = relationship("ExtractedEntity", back_populates="claim", cascade="all, delete-orphan")
     extraction_result = relationship("ExtractionResult", back_populates="claim", uselist=False, cascade="all, delete-orphan")
     report = relationship("Report", back_populates="claim", uselist=False, cascade="all, delete-orphan")
@@ -228,6 +235,10 @@ class ExtractionResult(Base):
 
     confidence_score = Column(Float, default=0.0)
     is_approved = Column(Boolean, default=False)
+    reviewed_by = Column(String(255))
+    reviewed_at = Column(DateTime)
+    approved_by = Column(String(255))
+    approved_at = Column(DateTime)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -247,7 +258,9 @@ class ICDCode(Base):
     code = Column(String(20), unique=True, nullable=False, index=True)
     description = Column(String(500), nullable=False)
     category = Column(String(100))
+    chapter = Column(String(200))
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
     diagnoses = relationship("Diagnosis", back_populates="icd_code")
 
@@ -273,6 +286,26 @@ class Diagnosis(Base):
     claim = relationship("Claim", back_populates="diagnoses")
     icd_code = relationship("ICDCode", back_populates="diagnoses")
 
+
+# ---------------------------------------------------------------------------
+# Claim ICD Recommendation  (Suggested codes for a given text)
+# ---------------------------------------------------------------------------
+
+class ClaimICDRecommendation(Base):
+    __tablename__ = "claim_icd_recommendations"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    claim_id = Column(String, ForeignKey("claims.id"), nullable=False, index=True)
+    diagnosis_text = Column(Text, nullable=False)
+    icd_code = Column(String(20), nullable=False)
+    confidence = Column(Float, default=0.0)
+    source = Column(String(100), default="FTS5_SEARCH")
+    status = Column(String(50), default=RecommendationStatus.SUGGESTED.value)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    claim = relationship("Claim", back_populates="icd_recommendations")
 
 # ---------------------------------------------------------------------------
 # Report  (generated ISCS report)
