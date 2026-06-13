@@ -17,6 +17,13 @@ class Settings(BaseSettings):
 
     # API Keys
     gemini_api_key: str | None = None
+    
+    # Auth
+    clerk_issuer_url: str | None = None
+    auth_mock: bool = False
+
+    # Redis/ARQ
+    redis_url: str = "redis://localhost:6379"
 
     model_config = SettingsConfigDict(
         env_file=".env",

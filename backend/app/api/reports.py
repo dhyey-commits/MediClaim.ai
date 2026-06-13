@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from app.database.database import get_db
-from app.models import Claim, Report
+from app.core.security import get_current_user
+from app.models import User, Claim, Report
 
 router = APIRouter()
 
@@ -44,9 +45,12 @@ async def list_reports(
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ReportListItem]:
     result = await db.execute(
         select(Report)
+        .join(Claim)
+        .where(Claim.organization_id == current_user.organization_id)
         .options(selectinload(Report.claim))
         .order_by(Report.created_at.desc())
         .offset(skip)
@@ -72,10 +76,12 @@ async def list_reports(
 async def get_report(
     report_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ReportDetailOut:
     result = await db.execute(
         select(Report)
-        .where(Report.id == report_id)
+        .join(Claim)
+        .where(Report.id == report_id, Claim.organization_id == current_user.organization_id)
         .options(selectinload(Report.claim))
     )
     report = result.scalar_one_or_none()
@@ -99,10 +105,12 @@ async def get_report(
 async def download_report_pdf(
     report_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     result = await db.execute(
         select(Report)
-        .where(Report.id == report_id)
+        .join(Claim)
+        .where(Report.id == report_id, Claim.organization_id == current_user.organization_id)
         .options(selectinload(Report.claim))
     )
     report = result.scalar_one_or_none()

@@ -1,9 +1,11 @@
+from __future__ import annotations
+
+from app.core.security import get_current_user
 """
 Claims API Router — Week 1 MVP: Create, List, Detail, Upload.
 All endpoints backed by real PostgreSQL queries.
 """
 
-from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
@@ -146,6 +148,7 @@ def _build_claim_detail(claim: Claim) -> ClaimDetailOut:
 async def create_claim(
     body: ClaimCreateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
     claim = Claim(
         claim_number=_generate_claim_number(),
@@ -158,6 +161,7 @@ async def create_claim(
     await db.refresh(claim)
 
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim.id,
         action="Claim created",
         entity_type="Claim",
@@ -177,6 +181,7 @@ async def list_claims(
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[ClaimListItem]:
     result = await db.execute(
         select(Claim)
@@ -208,10 +213,11 @@ async def list_claims(
 async def get_claim(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ClaimDetailOut:
     result = await db.execute(
         select(Claim)
-        .where(Claim.id == claim_id)
+        .where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id)
         .options(
             selectinload(Claim.documents),
         )
@@ -232,9 +238,10 @@ async def upload_documents(
     claim_id: str,
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
     # Verify claim exists
-    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    result = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
     claim = result.scalar_one_or_none()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
@@ -268,6 +275,7 @@ async def upload_documents(
     # Update claim status
     claim.status = ClaimStatus.DOCUMENT_UPLOADED.value
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim_id,
         action=f"Uploaded {len(uploaded)} document(s)",
         entity_type="Document",
@@ -283,16 +291,42 @@ async def upload_documents(
 @router.post("/{claim_id}/ocr", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_ocr(
     claim_id: str,
-    background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
-    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    result = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
     claim = result.scalar_one_or_none()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
         
+
+    from app.models import Document
+    import pypdf
+    docs_result = await db.execute(select(Document).where(Document.claim_id == claim_id))
+    docs = docs_result.scalars().all()
+    total_pages = 0
+    for doc in docs:
+        if doc.file_path and doc.file_path.endswith(".pdf"):
+            try:
+                reader = pypdf.PdfReader(doc.file_path)
+                total_pages += len(reader.pages)
+            except Exception:
+                pass
+    if total_pages > 50:
+        db.add(AuditLog(
+            user_id=current_user.id,
+            claim_id=claim_id,
+            action="OCR_REJECTED_PAGE_LIMIT",
+            entity_type="Claim",
+            entity_id=claim_id
+        ))
+        await db.commit()
+        raise HTTPException(status_code=413, detail="PDF exceeds 50 page limit")
+
     claim.status = ClaimStatus.OCR_PROCESSING.value
     await db.commit()
+
         
     # In FastAPI, BackgroundTasks run in the same event loop, but we need db session 
     # to be open. Instead of passing db, we might need a fresh session for the background task,
@@ -304,12 +338,24 @@ async def trigger_ocr(
     # To use background tasks with SQLAlchemy async, we should spawn a new session.
     # Let's adjust the wrapper to create a new session inline or just do it synchronously for MVP reliability.
     
-    from app.database.database import AsyncSessionLocal
-    async def ocr_wrapper(cid: str):
-        async with AsyncSessionLocal() as session:
-            await run_ocr_for_claim(cid, session)
-            
-    background_tasks.add_task(ocr_wrapper, claim_id)
+    from app.models import BackgroundJob, JobStatus
+    import uuid
+    job_id = uuid.uuid4().hex
+    db.add(BackgroundJob(
+        id=job_id,
+        claim_id=claim_id,
+        job_type="OCR",
+        status=JobStatus.QUEUED.value
+    ))
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="JOB_QUEUED",
+        entity_type="BackgroundJob",
+        entity_id=job_id,
+        new_value={"job_type": "OCR"}
+    ))
+    await db.commit()
+    await request.app.state.redis.enqueue_job('ocr_task', job_id, claim_id, current_user.id, _job_id=job_id)
     return {"message": "OCR processing started", "status": "OCR_PROCESSING"}
 
 
@@ -330,6 +376,7 @@ class OCRResultOut(BaseModel):
 async def get_ocr_results(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(OCRResult)
@@ -377,38 +424,59 @@ class ExtractionUpdate(BaseModel):
 @router.post("/{claim_id}/extract")
 async def trigger_extraction(
     claim_id: str,
-    background_tasks: BackgroundTasks,
+    request: Request,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    result = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
     claim = result.scalars().first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
 
-    if claim.status == ClaimStatus.EXTRACTION_PROCESSING.value:
-        raise HTTPException(status_code=409, detail="Extraction already running")
+
 
     if claim.status not in [ClaimStatus.OCR_COMPLETE.value, ClaimStatus.EXTRACTION_COMPLETE.value, ClaimStatus.EXTRACTION_FAILED.value]:
         raise HTTPException(status_code=400, detail="Claim is not ready for extraction")
 
-    claim.status = ClaimStatus.EXTRACTION_PROCESSING.value
+
+    from sqlalchemy import update
+    upd = update(Claim).where(
+        Claim.id == claim_id,
+        Claim.organization_id == current_user.organization_id,
+        Claim.status != ClaimStatus.EXTRACTION_PROCESSING.value
+    ).values(status=ClaimStatus.EXTRACTION_PROCESSING.value)
+    
+    upd_res = await db.execute(upd)
+    if upd_res.rowcount == 0:
+        raise HTTPException(status_code=409, detail="Extraction already running")
     await db.commit()
 
-    from app.database.database import AsyncSessionLocal
-    async def extraction_wrapper(cid: str):
-        async with AsyncSessionLocal() as session:
-            try:
-                await run_extraction_for_claim(cid, session)
-            except Exception as e:
-                print(f"Extraction failed: {e}")
 
-    background_tasks.add_task(extraction_wrapper, claim_id)
+    from app.models import BackgroundJob, JobStatus
+    import uuid
+    job_id = uuid.uuid4().hex
+    db.add(BackgroundJob(
+        id=job_id,
+        claim_id=claim_id,
+        job_type="EXTRACTION",
+        status=JobStatus.QUEUED.value
+    ))
+    db.add(AuditLog(
+        claim_id=claim_id,
+        action="JOB_QUEUED",
+        entity_type="BackgroundJob",
+        entity_id=job_id,
+        new_value={"job_type": "EXTRACTION"}
+    ))
+    await db.commit()
+    await request.app.state.redis.enqueue_job('extraction_task', job_id, claim_id, current_user.id, _job_id=job_id)
     return {"message": "Extraction started", "status": "EXTRACTION_PROCESSING"}
 
 @router.get("/{claim_id}/extraction", response_model=ExtractionResultOut)
 async def get_extraction(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(ExtractionResult).where(ExtractionResult.claim_id == claim_id))
     ext = result.scalars().first()
@@ -420,8 +488,9 @@ async def get_extraction(
 async def start_review(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    result = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
     claim = result.scalars().first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
@@ -437,6 +506,7 @@ async def start_review(
 
     claim.status = ClaimStatus.UNDER_REVIEW.value
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim_id,
         action="REVIEW_STARTED",
         entity_type="Claim",
@@ -450,8 +520,9 @@ async def update_review(
     claim_id: str,
     update_data: ExtractionUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    result = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
     claim = result.scalars().first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
@@ -481,6 +552,7 @@ async def update_review(
             ))
 
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim_id,
         action="REVIEW_SAVED",
         entity_type="ExtractionResult",
@@ -495,8 +567,9 @@ async def update_review(
 async def approve_claim(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Claim).where(Claim.id == claim_id))
+    result = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
     claim = result.scalars().first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
@@ -513,6 +586,7 @@ async def approve_claim(
 
     claim.status = ClaimStatus.APPROVED.value
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim_id,
         action="CLAIM_APPROVED",
         entity_type="Claim",
@@ -526,6 +600,7 @@ async def approve_claim(
 async def get_claim_audit(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(AuditLog).where(AuditLog.claim_id == claim_id).order_by(AuditLog.created_at.desc()))
     audits = result.scalars().all()
@@ -542,8 +617,9 @@ async def get_claim_audit(
 async def suggest_icd(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    claim_res = await db.execute(select(Claim).where(Claim.id == claim_id))
+    claim_res = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
     claim = claim_res.scalars().first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
@@ -582,6 +658,7 @@ async def suggest_icd(
         generated_count += len(suggestions)
         
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim_id,
         action="ICD_SUGGESTION_GENERATED",
         entity_type="Claim",
@@ -597,6 +674,7 @@ async def suggest_icd(
 async def get_icd_recommendations(
     claim_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     from app.models import ICDCode
     stmt = select(ClaimICDRecommendation, ICDCode.description).join(
@@ -621,6 +699,7 @@ async def accept_icd(
     claim_id: str,
     rec_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     rec_res = await db.execute(select(ClaimICDRecommendation).where(ClaimICDRecommendation.id == rec_id))
     rec = rec_res.scalars().first()
@@ -630,6 +709,7 @@ async def accept_icd(
     rec.status = RecommendationStatus.ACCEPTED.value
     
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim_id,
         action="ICD_ACCEPTED",
         entity_type="ClaimICDRecommendation",
@@ -645,6 +725,7 @@ async def reject_icd(
     claim_id: str,
     rec_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     rec_res = await db.execute(select(ClaimICDRecommendation).where(ClaimICDRecommendation.id == rec_id))
     rec = rec_res.scalars().first()
@@ -654,6 +735,7 @@ async def reject_icd(
     rec.status = RecommendationStatus.REJECTED.value
     
     db.add(AuditLog(
+        user_id=current_user.id,
         claim_id=claim_id,
         action="ICD_REJECTED",
         entity_type="ClaimICDRecommendation",
@@ -662,3 +744,148 @@ async def reject_icd(
     ))
     await db.commit()
     return {"message": "Rejected", "status": rec.status}
+
+@router.post("/{claim_id}/generate-report")
+async def generate_report(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models import Report
+    from app.services.report_generator import build_iscs_report_data, generate_pdf
+    import os
+
+    claim_res = await db.execute(select(Claim).where(Claim.id == claim_id, Claim.organization_id == current_user.organization_id))
+    claim = claim_res.scalars().first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    if claim.status not in (ClaimStatus.APPROVED.value, ClaimStatus.ICD_MAPPED.value, ClaimStatus.REPORT_GENERATED.value):
+        raise HTTPException(status_code=400, detail="Claim must be APPROVED or ICD_MAPPED to generate report")
+
+    # Prevent duplicate generation
+    rep_res = await db.execute(select(Report).where(Report.claim_id == claim_id))
+    report = rep_res.scalars().first()
+    if report:
+        return {
+            "claim_id": claim_id,
+            "report_id": report.id,
+            "status": claim.status,
+            "message": "Report already generated"
+        }
+
+    # 1. Build Data
+    try:
+        report_data = await build_iscs_report_data(claim_id, db)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build report data: {str(e)}")
+
+    # 2. Generate PDF
+    try:
+        pdf_bytes = generate_pdf(report_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate PDF: {str(e)}")
+
+
+    # 3. Save to disk
+    uploads_dir = os.path.join(os.getcwd(), "uploads", "reports")
+    os.makedirs(uploads_dir, exist_ok=True)
+    file_name = f"ISCS_{claim.claim_number}.pdf"
+    file_path = os.path.join(uploads_dir, file_name)
+
+    with open(file_path, "wb") as f:
+        f.write(pdf_bytes)
+
+    # 4. Save to DB
+    new_report = Report(
+        claim_id=claim_id,
+        file_name=file_name,
+        file_path=file_path,
+        version=1
+    )
+    db.add(new_report)
+    
+    from sqlalchemy.exc import IntegrityError
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        # Duplicate concurrent request occurred.
+        # Clean up orphaned file
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+        # Fetch the one that succeeded
+        rep_res = await db.execute(select(Report).where(Report.claim_id == claim_id))
+        report = rep_res.scalars().first()
+        return {
+            "claim_id": claim_id,
+            "report_id": report.id,
+            "status": claim.status,
+            "message": "Report already generated (concurrent call handled)"
+        }
+
+    await db.refresh(new_report)
+
+    return {
+        "claim_id": claim_id,
+        "report_id": new_report.id,
+        "status": claim.status,
+        "message": "Report generated successfully"
+    }
+
+
+@router.get("/{claim_id}/report")
+async def get_report_metadata(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models import Report
+    rep_res = await db.execute(select(Report).where(Report.claim_id == claim_id))
+    report = rep_res.scalars().first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+        
+    return {
+        "id": report.id,
+        "claim_id": report.claim_id,
+        "file_name": report.file_name,
+        "version": report.version,
+        "generated_at": report.generated_at.isoformat()
+    }
+
+
+@router.get("/{claim_id}/report/download")
+async def download_report(
+    claim_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models import Report
+    from fastapi.responses import FileResponse
+    import os
+    
+    rep_res = await db.execute(select(Report).where(Report.claim_id == claim_id))
+    report = rep_res.scalars().first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+        
+    if not os.path.exists(report.file_path):
+        raise HTTPException(status_code=404, detail="PDF file not found on disk")
+
+    db.add(AuditLog(
+        user_id=current_user.id,
+        claim_id=claim_id,
+        action="REPORT_DOWNLOADED",
+        entity_type="Report",
+        entity_id=report.id,
+        new_value={"file_name": report.file_name}
+    ))
+    await db.commit()
+    
+    return FileResponse(
+        path=report.file_path,
+        filename=report.file_name,
+        media_type="application/pdf"
+    )

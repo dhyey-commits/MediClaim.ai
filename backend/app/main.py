@@ -7,9 +7,18 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+
+from arq import create_pool
+from app.worker import redis_settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from app.core.logger import get_logger
+logger = get_logger(__name__)
 
 from app.core.config import get_settings
 from app.database.database import init_db
@@ -20,26 +29,32 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: create tables + seed data. Shutdown: cleanup."""
-    print("[MediClaim AI] API starting up...")
+    logger.info("[MediClaim AI] API starting up...")
     
     # Validate API Keys
     if not settings.gemini_api_key:
-        print("[ERROR] GEMINI_API_KEY is missing from environment variables.")
+        logger.error("GEMINI_API_KEY is missing from environment variables.")
         raise ValueError("GEMINI_API_KEY is required to start the application.")
     else:
-        print(f"[OK] GEMINI_API_KEY loaded successfully ({settings.gemini_api_key[:8]}...)")
+        logger.info("GEMINI_API_KEY loaded successfully")
+
+    app.state.redis = await create_pool(redis_settings)
+    print("[OK] ARQ Redis Pool initialized")
+
     try:
         await init_db()
-        print("[OK] Database initialised (PostgreSQL)")
+        logger.info("Database initialised")
     except Exception as e:
-        print(f"[WARN] Database init warning: {e}")
+        logger.warning(f"Database init warning: {e}")
 
     # Ensure uploads directory exists
     settings.upload_path.mkdir(parents=True, exist_ok=True)
-    print(f"[OK] Upload directory: {settings.upload_path}")
+    logger.info(f"Upload directory: {settings.upload_path}")
 
     yield
-    print("[MediClaim AI] API shutting down")
+
+    await app.state.redis.close()
+    logger.info("[MediClaim AI] API shutting down")
 
 
 app = FastAPI(
@@ -48,6 +63,24 @@ app = FastAPI(
     description="MediClaim AI — Clinical Documentation Standardization Platform API",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error"}
+    )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,13 +95,14 @@ uploads_path = settings.upload_path
 app.mount("/uploads", StaticFiles(directory=str(uploads_path)), name="uploads")
 
 # ── API Routes ───────────────────────────────────────────────────────────────
-from app.api import health, claims, documents, reports, analytics  # noqa: E402
+from app.api import health, claims, documents, reports, analytics, jobs
 
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(claims.router, prefix="/claims", tags=["claims"])
 app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
+app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 import traceback
 from fastapi import Request
 from fastapi.responses import JSONResponse

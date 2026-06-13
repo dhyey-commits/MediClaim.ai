@@ -20,7 +20,7 @@ except Exception as e:
     logger.error(f"Failed to initialize PaddleOCR: {e}")
     ocr_engine = None
 
-async def run_ocr_for_claim(claim_id: str, db: AsyncSession):
+async def run_ocr_for_claim(claim_id: str, user_id: str, db: AsyncSession):
     """
     Background task to run OCR on all pending/failed documents for a claim.
     """

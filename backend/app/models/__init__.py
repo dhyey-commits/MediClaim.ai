@@ -48,7 +48,7 @@ class ClaimStatus(str, enum.Enum):
     UNDER_REVIEW = "UNDER_REVIEW"
     APPROVED = "APPROVED"
     ICD_MAPPED = "ICD_MAPPED"
-    REPORT_READY = "REPORT_READY"
+    REPORT_GENERATED = "REPORT_GENERATED"
 
 
 class DocumentStatus(str, enum.Enum):
@@ -107,6 +107,14 @@ class User(Base):
     claims = relationship("Claim", back_populates="created_by")
     audit_logs = relationship("AuditLog", back_populates="user")
 
+
+
+class JobStatus(str, enum.Enum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    RETRYING = "RETRYING"
 
 # ---------------------------------------------------------------------------
 # Claim  (core entity — everything revolves around this)
@@ -287,6 +295,14 @@ class Diagnosis(Base):
     icd_code = relationship("ICDCode", back_populates="diagnoses")
 
 
+
+class JobStatus(str, enum.Enum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    RETRYING = "RETRYING"
+
 # ---------------------------------------------------------------------------
 # Claim ICD Recommendation  (Suggested codes for a given text)
 # ---------------------------------------------------------------------------
@@ -316,13 +332,10 @@ class Report(Base):
 
     id = Column(String, primary_key=True, default=_uuid)
     claim_id = Column(String, ForeignKey("claims.id"), nullable=False, unique=True)
-    report_type = Column(String(50), default="ISCS")
-    report_data = Column(JSON)              # structured sections as JSON
-    pdf_path = Column(String(500))          # path to generated PDF
-    is_generated = Column(Boolean, default=False)
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
     version = Column(Integer, default=1)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    generated_at = Column(DateTime, default=datetime.utcnow)
 
     claim = relationship("Claim", back_populates="report")
 
@@ -347,3 +360,21 @@ class AuditLog(Base):
 
     user = relationship("User", back_populates="audit_logs")
     claim = relationship("Claim", back_populates="audit_logs")
+
+# ---------------------------------------------------------------------------
+# BackgroundJob
+# ---------------------------------------------------------------------------
+
+class BackgroundJob(Base):
+    __tablename__ = "background_jobs"
+
+    id = Column(String, primary_key=True) # ARQ job_id
+    claim_id = Column(String, ForeignKey("claims.id"), nullable=True)
+    job_type = Column(String, nullable=False) # e.g. OCR, EXTRACTION
+    status = Column(String, default=JobStatus.QUEUED.value)
+    retry_count = Column(Integer, default=0)
+    error_message = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    claim = relationship("Claim")

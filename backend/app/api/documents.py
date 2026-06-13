@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.database import get_db
-from app.models import Document
+from app.core.security import get_current_user
+from app.models import User, Document
 from app.services.storage import get_file
 
 router = APIRouter()
@@ -35,9 +36,13 @@ async def list_documents(
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[DocumentDetailOut]:
+    from app.models import Claim
     result = await db.execute(
         select(Document)
+        .join(Claim)
+        .where(Claim.organization_id == current_user.organization_id)
         .options(selectinload(Document.claim))
         .order_by(Document.created_at.desc())
         .offset(skip)
@@ -67,10 +72,13 @@ async def list_documents(
 async def get_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> DocumentDetailOut:
+    from app.models import Claim
     result = await db.execute(
         select(Document)
-        .where(Document.id == document_id)
+        .join(Claim)
+        .where(Document.id == document_id, Claim.organization_id == current_user.organization_id)
         .options(selectinload(Document.claim))
     )
     doc = result.scalar_one_or_none()
@@ -96,10 +104,14 @@ async def get_document(
 async def download_document(
     document_id: str,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> FileResponse:
     """Download the actual file for a document."""
+    from app.models import Claim
     result = await db.execute(
-        select(Document).where(Document.id == document_id)
+        select(Document)
+        .join(Claim)
+        .where(Document.id == document_id, Claim.organization_id == current_user.organization_id)
     )
     doc = result.scalar_one_or_none()
     if not doc:
