@@ -378,3 +378,26 @@ class BackgroundJob(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     claim = relationship("Claim")
+
+# ---------------------------------------------------------------------------
+# BenchmarkRun
+# ---------------------------------------------------------------------------
+
+class BenchmarkRun(Base):
+    __tablename__ = "benchmark_runs"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    claim_id = Column(String, ForeignKey("claims.id"), nullable=True)
+    organization_id = Column(String, nullable=True)
+    run_date = Column(DateTime, default=datetime.utcnow)
+    document_source = Column(String, nullable=True)
+    reviewer = Column(String, nullable=True)
+    ground_truth_json = Column(JSON, nullable=True)
+    metrics_json = Column(JSON, nullable=False)
+    
+    # Timing Metrics
+    review_time_sec = Column(Float, nullable=True)
+    correction_time_sec = Column(Float, nullable=True)
+    approval_time_sec = Column(Float, nullable=True)
+
+    claim = relationship("Claim")

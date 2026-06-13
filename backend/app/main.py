@@ -95,7 +95,7 @@ uploads_path = settings.upload_path
 app.mount("/uploads", StaticFiles(directory=str(uploads_path)), name="uploads")
 
 # ── API Routes ───────────────────────────────────────────────────────────────
-from app.api import health, claims, documents, reports, analytics, jobs
+from app.api import health, claims, documents, reports, analytics, jobs, benchmarks
 
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(claims.router, prefix="/claims", tags=["claims"])
@@ -103,6 +103,7 @@ app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+app.include_router(benchmarks.router, prefix="/api/v1/benchmarks")
 import traceback
 from fastapi import Request
 from fastapi.responses import JSONResponse
