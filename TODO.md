@@ -48,3 +48,4 @@
 - [ ] Start stack with docker compose.
 - [ ] Verify: claim transitions persist; pages navigate via sidebar; actions update DB.
 
+update local dev auth .
