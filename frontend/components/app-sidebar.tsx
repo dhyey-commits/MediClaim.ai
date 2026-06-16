@@ -54,11 +54,24 @@ export function AppSidebar() {
             <Stethoscope size={18} color="white" />
           </div>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: 8 }}>
               MediClaim AI
+              {!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && (
+                <span style={{
+                  fontSize: 8,
+                  background: "rgba(239, 68, 68, 0.2)",
+                  color: "#fca5a5",
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  fontWeight: 800,
+                  letterSpacing: "0.05em"
+                }}>
+                  DEV MODE
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 1 }}>
-              Clinical Platform
+              Platform v1.0
             </div>
           </div>
         </div>

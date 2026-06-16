@@ -23,6 +23,19 @@ class ExtractedDiagnosis(BaseModel):
     classification: str = Field(description="PRIMARY, SECONDARY, or COMORBIDITY")
     confidence_score: float = Field(description="Confidence score from 0.0 to 1.0")
 
+class ExtractedProcedure(BaseModel):
+    description: str = Field(description="The procedure name or description")
+    date: Optional[str] = Field(None, description="Date of the procedure if available")
+
+class ExtractedMedication(BaseModel):
+    name: str = Field(description="Name of the medication")
+    dosage: Optional[str] = Field(None, description="Dosage of the medication")
+    frequency: Optional[str] = Field(None, description="Frequency of the medication")
+
+class ExtractedInvestigation(BaseModel):
+    name: str = Field(description="Name of the investigation or lab test")
+    result: Optional[str] = Field(None, description="Result or findings if available")
+
 class ClinicalExtractionPass1(BaseModel):
     patient_name: Optional[str] = Field(None, description="Full name of the patient")
     age: Optional[str] = Field(None, description="Age of the patient")
@@ -37,19 +50,6 @@ class ClinicalExtractionPass1(BaseModel):
 
 class ClinicalExtractionPass2(BaseModel):
     classified_diagnoses: List[ExtractedDiagnosis] = Field(description="Classified list of diagnoses")
-
-class ExtractedProcedure(BaseModel):
-    description: str = Field(description="The procedure name or description")
-    date: Optional[str] = Field(None, description="Date of the procedure if available")
-
-class ExtractedMedication(BaseModel):
-    name: str = Field(description="Name of the medication")
-    dosage: Optional[str] = Field(None, description="Dosage of the medication")
-    frequency: Optional[str] = Field(None, description="Frequency of the medication")
-
-class ExtractedInvestigation(BaseModel):
-    name: str = Field(description="Name of the investigation or lab test")
-    result: Optional[str] = Field(None, description="Result or findings if available")
 
 class ClinicalExtraction(BaseModel):
     patient_name: Optional[str] = Field(None, description="Full name of the patient")

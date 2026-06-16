@@ -13,7 +13,7 @@ security = HTTPBearer()
 
 def verify_token(token: str) -> dict:
     if settings.auth_mock:
-        return {"sub": "mock_user_id"}
+        return {"sub": "local-dev-user"}
     
     if not settings.clerk_issuer_url:
         raise HTTPException(
@@ -43,6 +43,24 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
+    if settings.auth_mock:
+        from app.models import Organization
+        org_res = await db.execute(select(Organization).where(Organization.id == "local-dev-org"))
+        org = org_res.scalars().first()
+        if not org:
+            org = Organization(id="local-dev-org", name="Local Dev Hospital", email="dev@hospital.com")
+            db.add(org)
+            await db.commit()
+            
+        user_res = await db.execute(select(User).where(User.id == "local-dev-user"))
+        user = user_res.scalars().first()
+        if not user:
+            user = User(id="local-dev-user", clerk_id="local-dev-user", email="mock@example.com", name="Mock User", organization_id="local-dev-org")
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+        return user
+
     token = credentials.credentials
     payload = verify_token(token)
     clerk_id = payload.get("sub")
@@ -54,13 +72,6 @@ async def get_current_user(
     user = result.scalars().first()
     
     if not user:
-        if settings.auth_mock:
-            # Create a mock user if it doesn't exist for easier dev
-            user = User(clerk_id=clerk_id, email="mock@example.com", name="Mock User", organization_id="mock_org")
-            db.add(user)
-            await db.commit()
-            await db.refresh(user)
-        else:
-            raise HTTPException(status_code=401, detail="User not found")
+        raise HTTPException(status_code=401, detail="User not found")
             
     return user

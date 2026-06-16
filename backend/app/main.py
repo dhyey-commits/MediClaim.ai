@@ -38,8 +38,21 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("GEMINI_API_KEY loaded successfully")
 
-    app.state.redis = await create_pool(redis_settings)
-    print("[OK] ARQ Redis Pool initialized")
+    # Validate Auth Settings
+    if not settings.auth_mock and not settings.clerk_issuer_url:
+        logger.error("CLERK_ISSUER_URL is missing but AUTH_MOCK is false. Refusing to start in insecure state.")
+        raise ValueError("CLERK_ISSUER_URL is required for production authentication.")
+
+    try:
+        app.state.redis = await create_pool(redis_settings)
+        print("[OK] ARQ Redis Pool initialized")
+    except Exception as e:
+        if settings.environment.lower() == "production":
+            logger.error("Failed to connect to Redis. Production mode requires Redis.")
+            raise e
+        else:
+            logger.warning(f"Failed to connect to Redis. Running in local development mode without background jobs. Error: {e}")
+            app.state.redis = None
 
     try:
         await init_db()
@@ -53,7 +66,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    await app.state.redis.close()
+    if getattr(app.state, "redis", None):
+        await app.state.redis.close()
     logger.info("[MediClaim AI] API shutting down")
 
 

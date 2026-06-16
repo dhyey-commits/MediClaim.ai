@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Providers } from "@/components/providers";
+import { ClerkAxiosInterceptor } from "@/components/clerk-axios-interceptor";
+import { MockAxiosInterceptor } from "@/components/mock-axios-interceptor";
 import "./globals.css";
 
 const inter = Inter({
@@ -29,12 +31,18 @@ function ConditionalClerkProvider({ children }: { children: React.ReactNode }) {
         afterSignInUrl="/dashboard"
         afterSignUpUrl="/dashboard"
       >
-        {children}
+        <ClerkAxiosInterceptor>
+          {children}
+        </ClerkAxiosInterceptor>
       </ClerkProvider>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <MockAxiosInterceptor>
+      {children}
+    </MockAxiosInterceptor>
+  );
 }
 
 export default function RootLayout({

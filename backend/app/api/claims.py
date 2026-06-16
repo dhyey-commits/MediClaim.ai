@@ -150,6 +150,10 @@ async def create_claim(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Authenticated Request - User ID: {current_user.id}, Organization ID: {current_user.organization_id}")
+    
     claim = Claim(
         claim_number=_generate_claim_number(),
         patient_name=body.patient_name,
