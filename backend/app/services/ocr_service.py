@@ -43,6 +43,8 @@ async def run_ocr_for_claim(claim_id: str, user_id: str, db: AsyncSession):
     
     if not docs_to_process:
         logger.info(f"No documents to process for claim {claim_id}")
+        claim.status = ClaimStatus.DOCUMENT_UPLOADED.value
+        await db.commit()
         return
 
     claim.status = ClaimStatus.OCR_PROCESSING.value
